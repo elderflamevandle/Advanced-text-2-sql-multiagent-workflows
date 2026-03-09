@@ -2,36 +2,43 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 01-foundation-core-infrastructure
+current_phase: 01-foundation-core-infrastructure (Plan 02 complete, Plan 03 next)
 status: in-progress
-last_updated: "2026-03-09T18:35:00.000Z"
+last_updated: "2026-03-09T19:05:00.000Z"
 progress:
   total_phases: 12
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
-  percent: 33
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
 
 **Last Updated:** 2026-03-09
 **Milestone:** v1.0 - Production-Ready Multi-Agent Text-to-SQL System
-**Current Phase:** 01-foundation-core-infrastructure (Plan 01 complete, Plan 02 next)
+**Current Phase:** 01-foundation-core-infrastructure (Plan 02 complete, Plan 03 next)
 
 ---
 
 ## Current Status
 
-**Progress:** [███░░░░░░░] 33%
+**Progress:** [███████░░░] 67%
 
-**Active Work:** Phase 1 Plan 01 complete — ready for Plan 02 (DatabaseManager implementation)
+**Active Work:** Phase 1 Plan 02 complete — ready for Plan 03 (PostgreSQL/MySQL connectors)
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-09: Phase 1 Plan 02 Complete (Database Connectors)
+- Implemented BaseConnector ABC (5 abstract methods), SchemaTable/ColumnInfo/FKInfo TypedDicts
+- DuckDBConnector: thread-safe cursor-per-thread via threading.local, INFORMATION_SCHEMA + PRAGMA FK fallback
+- SQLiteConnector: PRAGMA table_info + foreign_key_list introspection, PRAGMA foreign_keys = ON enforcement
+- DatabaseManager facade: factory dispatch on db_type, schema caching, refresh_schema()
+- 8 previously-xfail DuckDB/SQLite tests now pass; test suite: 19 passed, 3 xfailed, 0 failures
 
 ### 2026-03-09: Phase 1 Plan 01 Complete (Foundation Scaffold)
 - Created pyproject.toml (PEP 621, 11 core deps, dev/mysql/postgresql extras)
@@ -60,6 +67,11 @@ progress:
 ---
 
 ## Key Decisions
+
+### Phase 1 Plan 02 (2026-03-09)
+- DuckDB PRAGMA foreign_key_list() used as FK fallback — INFORMATION_SCHEMA FK data is incomplete for SQLite-attached files
+- Removed global pytestmark xfail from test_manager.py; per-test xfail marks on Plan-03 tests only
+- DatabaseManager uses lazy _CONNECTOR_REGISTRY; PostgreSQL/MySQL connectors added in Plan 03 via conditional import
 
 ### Phase 1 Plan 01 (2026-03-09)
 - Used `setuptools.build_meta` instead of `setuptools.backends.legacy` — backends.legacy unavailable in setuptools 82.0.1 on Python 3.14
@@ -98,19 +110,19 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-09T18:35:00Z
+**Last Session:** 2026-03-09T19:05:00Z
 
-**Resume Point:** Completed 01-foundation-core-infrastructure 01-01-PLAN.md
+**Resume Point:** Completed 01-foundation-core-infrastructure 01-02-PLAN.md
 
 **Next Steps:**
-1. `/gsd:execute-phase 1` - Execute Plan 02: DatabaseManager implementation
-2. `/gsd:execute-phase 1` - Execute Plan 03: Database connectors
+1. `/gsd:execute-phase 1` - Execute Plan 03: PostgreSQL and MySQL connectors
 
 **Context for Next Session:**
-- Package scaffold installed and importable (pip install -e ".[dev]" succeeds)
-- Test infrastructure ready: chinook_db_path fixture, 11 xfail DB-001 stubs define exact API contract
-- DatabaseManager must implement: db_type param, test_connection(), get_schema() with caching, refresh_schema()
-- data/chinook.db available (11 tables: Artist, Album, Track, Genre, etc.)
+- DatabaseManager fully functional for DuckDB and SQLite
+- BaseConnector ABC in database/connectors/base.py — all 5 methods proven
+- _CONNECTOR_REGISTRY in database/manager.py — extend with conditional imports for postgresql/mysql
+- Test suite: 19 passed, 3 xfailed (test_connection_retry, test_postgresql_mock, test_mysql_mock)
+- Plan 03 tests expect: DatabaseManager(db_type="postgresql"/"mysql") to work; retry logic on transient ConnectionError
 
 ---
 
