@@ -10,7 +10,7 @@
 
 | Phase | Name | Status | Requirements |
 |-------|------|--------|--------------|
-| 1 | Foundation & Core Infrastructure | Not Started | INFRA-001, INFRA-002, DB-001 |
+| 1 | 1/3 | In Progress|  |
 | 2 | AgentState & LangGraph Skeleton | Not Started | GRAPH-001, GRAPH-002, GRAPH-003 |
 | 3 | Vector Schema Retrieval (Pinecone) | Not Started | VECTOR-001, VECTOR-002, VECTOR-003 |
 | 4 | Specialized Agent Nodes | Not Started | AGENT-001, AGENT-002, AGENT-003, AGENT-004 |
@@ -45,14 +45,12 @@
 - ✓ `.env.example` created for secrets management
 - ✓ Basic smoke test: connect to sample DB and fetch schema
 
-**Deliverables:**
-- `requirements.txt` with all dependencies
-- Project directory structure
-- `src/database/manager.py` - DatabaseManager class
-- `src/database/connectors/` - dialect-specific connectors
-- `data/chinook.db` - sample SQLite database
-- `.env.example` - template for environment variables
-- `tests/database/test_manager.py` - basic connection tests
+**Plans:** 1/3 plans executed
+
+Plans:
+- [ ] 01-01-PLAN.md — Project scaffold: pyproject.toml, directory structure, config skeletons, Chinook DB, test infrastructure
+- [ ] 01-02-PLAN.md — BaseConnector abstraction + DuckDB/SQLite connectors + DatabaseManager facade
+- [ ] 01-03-PLAN.md — PostgreSQL/MySQL connectors + tenacity retry + complete DB-001 test suite
 
 **Dependencies:** None (foundational phase)
 
@@ -84,10 +82,10 @@
 - ✓ Simple end-to-end test: pass query through graph (nodes return mock data)
 
 **Deliverables:**
-- `src/graph/state.py` - AgentState definition
-- `src/graph/graph_builder.py` - StateGraph construction
-- `src/graph/conditions.py` - conditional routing functions
-- `src/agents/` - placeholder node functions
+- `graph/state.py` - AgentState definition
+- `graph/builder.py` - StateGraph construction
+- `graph/conditions.py` - conditional routing functions
+- `agents/` - placeholder node functions
 - `tests/graph/test_state.py` - state validation tests
 - `tests/graph/test_graph.py` - graph compilation test
 
@@ -122,9 +120,9 @@
 - ✓ Test: retrieve relevant tables for "total sales by region" query
 
 **Deliverables:**
-- `src/vector/embeddings.py` - embedding generation
-- `src/vector/retriever.py` - Pinecone retrieval logic
-- `src/vector/schema_graph.py` - FK relationship graph
+- `vector/embeddings.py` - embedding generation
+- `vector/retriever.py` - Pinecone retrieval logic
+- `vector/schema_graph.py` - FK relationship graph
 - `config/pinecone_config.yaml` - index configuration
 - `tests/vector/test_retrieval.py` - retrieval accuracy tests
 
@@ -158,11 +156,11 @@
 - ✓ Test: "Show total sales by region" → valid PostgreSQL SELECT query
 
 **Deliverables:**
-- `src/agents/gatekeeper.py` - query validation
-- `src/agents/schema_linker.py` - schema retrieval integration
-- `src/agents/query_planner.py` - CoT planning
-- `src/agents/sql_generator.py` - SQL generation
-- `src/utils/prompts/` - agent-specific prompts
+- `agents/gatekeeper.py` - query validation
+- `agents/schema_linker.py` - schema retrieval integration
+- `agents/query_planner.py` - CoT planning
+- `agents/sql_generator.py` - SQL generation
+- `utils/prompts/` - agent-specific prompts
 - `tests/agents/` - unit tests for each agent
 
 **Dependencies:**
@@ -197,9 +195,9 @@
 - ✓ Test: Attempt "DROP TABLE users" → blocked before execution
 
 **Deliverables:**
-- `src/agents/executor.py` - execution node
-- `src/database/safety.py` - keyword scanner
-- `src/database/dialect_handler.py` - dialect-specific logic
+- `agents/executor.py` - execution node
+- `database/safety.py` - keyword scanner
+- `database/dialect_handler.py` - dialect-specific logic
 - `config/safety_config.yaml` - blocked keywords list
 - `tests/safety/test_keyword_scanner.py` - safety tests
 
@@ -236,9 +234,9 @@
 
 **Deliverables:**
 - `config/error-taxonomy.json` - 20 error categories
-- `src/agents/correction_plan.py` - diagnostic agent
-- `src/agents/correction_sql.py` - correction agent
-- `src/utils/error_parser.py` - PostgreSQL/MySQL error parsers
+- `agents/correction_plan.py` - diagnostic agent
+- `agents/correction_sql.py` - correction agent
+- `utils/error_parser.py` - PostgreSQL/MySQL error parsers
 - `tests/agents/test_correction.py` - correction loop tests
 
 **Dependencies:** Phase 5 (execution failures to correct)
@@ -271,10 +269,10 @@
 - ✓ Test: Groq timeout → automatic OpenAI fallback → success
 
 **Deliverables:**
-- `src/llm/groq_client.py` - Groq API client
-- `src/llm/openai_client.py` - OpenAI client
-- `src/llm/fallback.py` - fallback orchestration
-- `src/llm/usage_tracker.py` - token/cost tracking
+- `llm/groq_client.py` - Groq API client
+- `llm/openai_client.py` - OpenAI client
+- `llm/fallback.py` - fallback orchestration
+- `llm/usage_tracker.py` - token/cost tracking
 - `tests/llm/test_fallback.py` - fallback logic tests
 
 **Dependencies:** Phase 4 (agent nodes using LLMs)
@@ -350,9 +348,9 @@
 - ✓ Test: Run 10 queries, view history, export to CSV
 
 **Deliverables:**
-- `src/memory/session.py` - session management
-- `src/memory/history.py` - query history storage
-- `src/memory/analytics.py` - analytics aggregation
+- `memory/session.py` - session management
+- `memory/history.py` - query history storage
+- `memory/analytics.py` - analytics aggregation
 - `streamlit_app/components/history.py` - history UI
 - `streamlit_app/components/analytics.py` - analytics dashboard
 
@@ -422,8 +420,8 @@
 - ✓ Test: Run golden dataset through evaluation → accuracy scores
 
 **Deliverables:**
-- `src/evaluation/evaluator.py` - Ragas integration
-- `src/evaluation/metrics.py` - custom metrics
+- `evaluation/evaluator.py` - Ragas integration
+- `evaluation/metrics.py` - custom metrics
 - `streamlit_app/components/evaluation.py` - metrics UI
 - `tests/evaluation/test_ragas.py` - evaluation tests
 
@@ -533,5 +531,6 @@
 ---
 
 *Roadmap created: 2025-03-08*
+*Phase 1 planned: 2026-03-09*
 *Milestone: v1.0*
 *Estimated duration: 3-4 weeks*

@@ -586,8 +586,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-001 | Phase 1 | Pending |
-| INFRA-002 | Phase 1 | Pending |
+| INFRA-001 | Phase 1 | Complete |
+| INFRA-002 | Phase 1 | Complete |
 | INFRA-003 | Phase 12 | Pending |
 | DB-001 | Phase 2 | Pending |
 | DB-002 | Phase 5 | Pending |
