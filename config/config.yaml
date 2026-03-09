@@ -1,0 +1,21 @@
+database:
+  default_type: duckdb
+  default_path: data/chinook.db
+  query_timeout: 30
+  schema_cache_enabled: true
+
+llm:
+  primary_provider: groq
+  fallback_provider: openai
+  request_timeout: 60
+
+retry:
+  max_attempts: 3
+  backoff_factor: 2
+  min_wait: 1
+  max_wait: 4
+
+app:
+  human_in_loop_enabled: true
+  max_correction_retries: 3
+  log_level: INFO
