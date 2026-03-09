@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import logging
 
 from dotenv import load_dotenv
 
@@ -11,12 +12,60 @@ from database.connectors.sqlite_connector import SQLiteConnector
 
 load_dotenv(override=False)
 
-_CONNECTOR_REGISTRY: dict[str, type[BaseConnector]] = {
-    "duckdb": DuckDBConnector,
-    "sqlite": SQLiteConnector,
-    # "postgresql" and "mysql" added in Plan 03 via lazy/conditional import
-    # to avoid ImportError for users who haven't installed those optional extras.
-}
+logger = logging.getLogger(__name__)
+
+
+def _get_connector(db_type: str, **kwargs) -> BaseConnector:
+    """Factory: return a configured connector instance for the given db_type.
+
+    PostgreSQL and MySQL are imported lazily so that the base package remains
+    importable on systems without those optional extras installed.
+    """
+    db_type = db_type.lower()
+
+    if db_type == "duckdb":
+        db_path = kwargs.get("db_path", os.getenv("DB_PATH", "data/chinook.db"))
+        return DuckDBConnector(db_path=db_path)
+
+    elif db_type == "sqlite":
+        db_path = kwargs.get("db_path", os.getenv("DB_PATH", "data/chinook.db"))
+        return SQLiteConnector(db_path=db_path)
+
+    elif db_type == "postgresql":
+        try:
+            from database.connectors.postgresql_connector import PostgreSQLConnector  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "PostgreSQL support requires: pip install -e '.[postgresql]'"
+            ) from exc
+        return PostgreSQLConnector(
+            host=kwargs.get("host", os.getenv("DB_HOST", "localhost")),
+            port=int(kwargs.get("port", os.getenv("DB_PORT", 5432))),
+            database=kwargs.get("database", os.getenv("DB_NAME", "postgres")),
+            user=kwargs.get("user", os.getenv("DB_USER", "postgres")),
+            password=kwargs.get("password", os.getenv("DB_PASSWORD", "")),
+        )
+
+    elif db_type == "mysql":
+        try:
+            from database.connectors.mysql_connector import MySQLConnector  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "MySQL support requires: pip install -e '.[mysql]'"
+            ) from exc
+        return MySQLConnector(
+            host=kwargs.get("host", os.getenv("DB_HOST", "localhost")),
+            port=int(kwargs.get("port", os.getenv("DB_PORT", 3306))),
+            database=kwargs.get("database", os.getenv("DB_NAME", "mysql")),
+            user=kwargs.get("user", os.getenv("DB_USER", "root")),
+            password=kwargs.get("password", os.getenv("DB_PASSWORD", "")),
+        )
+
+    else:
+        raise ValueError(
+            f"Unsupported db_type: {db_type!r}. "
+            f"Supported: duckdb, sqlite, postgresql, mysql"
+        )
 
 
 class DatabaseManager:
@@ -35,13 +84,7 @@ class DatabaseManager:
 
     def __init__(self, db_type: str | None = None, **kwargs: object) -> None:
         db_type = (db_type or os.getenv("DB_TYPE", "duckdb")).lower()
-        if db_type not in _CONNECTOR_REGISTRY:
-            raise ValueError(
-                f"Unsupported db_type: {db_type!r}. "
-                f"Supported: {list(_CONNECTOR_REGISTRY)}"
-            )
-        connector_cls = _CONNECTOR_REGISTRY[db_type]
-        self._connector: BaseConnector = connector_cls(**kwargs)  # type: ignore[arg-type]
+        self._connector: BaseConnector = _get_connector(db_type, **kwargs)
         self._schema_cache: dict | None = None
 
     # ------------------------------------------------------------------

@@ -4,9 +4,22 @@ from __future__ import annotations
 import threading
 
 import duckdb
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from database.connectors.base import BaseConnector
 from database.schema_utils import ColumnInfo, FKInfo, SchemaTable
+
+RETRY_EXCEPTIONS = (ConnectionError, TimeoutError, OSError)
+
+
+def _connection_retry(func):
+    """Tenacity retry decorator: 3 attempts, exponential backoff 1s/2s/4s."""
+    return retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=4),
+        retry=retry_if_exception_type(RETRY_EXCEPTIONS),
+        reraise=True,
+    )(func)
 
 
 class DuckDBConnector(BaseConnector):
@@ -38,9 +51,17 @@ class DuckDBConnector(BaseConnector):
         return self._local.cursor
 
     def test_connection(self) -> bool:
-        """Return True if a test query succeeds."""
+        """Return True if a test query succeeds.
+
+        Uses a tenacity retry wrapper around connect() to handle transient
+        ConnectionError / TimeoutError / OSError (3 attempts total).
+        """
+        @_connection_retry
+        def _connect_with_retry():
+            return self.connect()
+
         try:
-            cur = self.connect()
+            cur = _connect_with_retry()
             cur.execute("SELECT 1")
             return True
         except Exception:

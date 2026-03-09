@@ -77,7 +77,6 @@ def test_schema_refresh(sqlite_manager):
 # Plan 03 tests — remain xfail until PostgreSQL/MySQL connectors implemented
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(reason="Retry logic not yet implemented (Plan 03)", strict=False)
 def test_connection_retry(mocker):
     """Retry logic fires on transient ConnectionError (mocked)."""
     if DatabaseManager is None:
@@ -96,7 +95,6 @@ def test_connection_retry(mocker):
     assert call_count["n"] == 3, "Expected exactly 3 connection attempts"
 
 
-@pytest.mark.xfail(reason="PostgreSQL connector not yet implemented (Plan 03)", strict=False)
 def test_postgresql_mock(mock_pg_conn, mocker):
     """PostgreSQL connector returns expected schema shape (no live DB needed)."""
     if DatabaseManager is None:
@@ -108,7 +106,6 @@ def test_postgresql_mock(mock_pg_conn, mocker):
     assert isinstance(schema, dict)
 
 
-@pytest.mark.xfail(reason="MySQL connector not yet implemented (Plan 03)", strict=False)
 def test_mysql_mock(mock_mysql_conn, mocker):
     """MySQL connector returns expected schema shape (no live DB needed)."""
     if DatabaseManager is None:
