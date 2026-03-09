@@ -89,6 +89,13 @@ Plans:
 - `tests/graph/test_state.py` - state validation tests
 - `tests/graph/test_graph.py` - graph compilation test
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — AgentState TypedDict + routing conditions + GRAPH-001 test suite (Wave 1)
+- [ ] 02-02-PLAN.md — 9 async placeholder node files + agents/nodes/__init__.py re-exports (Wave 1)
+- [ ] 02-03-PLAN.md — graph/builder.py compiled_graph singleton + GRAPH-002/GRAPH-003 integration tests (Wave 2)
+
 **Dependencies:** Phase 1 (project structure)
 
 **Risks:**
@@ -532,5 +539,6 @@ Plans:
 
 *Roadmap created: 2025-03-08*
 *Phase 1 planned: 2026-03-09*
+*Phase 2 planned: 2026-03-09*
 *Milestone: v1.0*
 *Estimated duration: 3-4 weeks*
