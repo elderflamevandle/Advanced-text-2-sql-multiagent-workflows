@@ -1,18 +1,15 @@
 """
 Tests for DatabaseManager (DB-001).
-Tests are xfail stubs until DatabaseManager implemented in Plans 02-03.
+DuckDB and SQLite tests pass after Plan 02.
+PostgreSQL, MySQL, and retry tests remain xfail until Plan 03.
 """
 import pytest
 
-# Import will fail until database/manager.py exists — xfail handles this
+# Import will succeed after database/manager.py exists (Plan 02)
 try:
     from database.manager import DatabaseManager
 except ImportError:
     DatabaseManager = None
-
-pytestmark = pytest.mark.xfail(
-    reason="DatabaseManager not yet implemented", strict=False
-)
 
 
 @pytest.fixture
@@ -24,6 +21,10 @@ def duckdb_manager(chinook_db_path):
 def sqlite_manager(chinook_db_path):
     return DatabaseManager(db_type="sqlite", db_path=chinook_db_path)
 
+
+# --------------------------------------------------------------------------
+# DuckDB + SQLite tests — these pass after Plan 02
+# --------------------------------------------------------------------------
 
 def test_duckdb_connection(duckdb_manager):
     assert duckdb_manager.test_connection() is True
@@ -72,12 +73,16 @@ def test_schema_refresh(sqlite_manager):
     assert schema1 is not schema2, "refresh_schema() must return new object"
 
 
+# --------------------------------------------------------------------------
+# Plan 03 tests — remain xfail until PostgreSQL/MySQL connectors implemented
+# --------------------------------------------------------------------------
+
+@pytest.mark.xfail(reason="Retry logic not yet implemented (Plan 03)", strict=False)
 def test_connection_retry(mocker):
     """Retry logic fires on transient ConnectionError (mocked)."""
     if DatabaseManager is None:
         pytest.xfail("DatabaseManager not implemented")
     call_count = {"n": 0}
-    original_connect = None  # patched below
 
     def flaky_connect(*args, **kwargs):
         call_count["n"] += 1
@@ -91,6 +96,7 @@ def test_connection_retry(mocker):
     assert call_count["n"] == 3, "Expected exactly 3 connection attempts"
 
 
+@pytest.mark.xfail(reason="PostgreSQL connector not yet implemented (Plan 03)", strict=False)
 def test_postgresql_mock(mock_pg_conn, mocker):
     """PostgreSQL connector returns expected schema shape (no live DB needed)."""
     if DatabaseManager is None:
@@ -102,6 +108,7 @@ def test_postgresql_mock(mock_pg_conn, mocker):
     assert isinstance(schema, dict)
 
 
+@pytest.mark.xfail(reason="MySQL connector not yet implemented (Plan 03)", strict=False)
 def test_mysql_mock(mock_mysql_conn, mocker):
     """MySQL connector returns expected schema shape (no live DB needed)."""
     if DatabaseManager is None:
