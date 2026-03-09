@@ -2,36 +2,44 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 01-foundation-core-infrastructure (Plan 02 complete, Plan 03 next)
-status: in-progress
-last_updated: "2026-03-09T19:05:00.000Z"
+current_phase: 01-foundation-core-infrastructure (ALL PLANS COMPLETE)
+status: phase-complete
+last_updated: "2026-03-09T19:10:00.000Z"
 progress:
   total_phases: 12
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 67
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
 
 **Last Updated:** 2026-03-09
 **Milestone:** v1.0 - Production-Ready Multi-Agent Text-to-SQL System
-**Current Phase:** 01-foundation-core-infrastructure (Plan 02 complete, Plan 03 next)
+**Current Phase:** 01-foundation-core-infrastructure — ALL 3 PLANS COMPLETE
 
 ---
 
 ## Current Status
 
-**Progress:** [███████░░░] 67%
+**Progress:** [██████████] 100% (Phase 1 complete)
 
-**Active Work:** Phase 1 Plan 02 complete — ready for Plan 03 (PostgreSQL/MySQL connectors)
+**Active Work:** Phase 1 complete — ready for Phase 2 (LangGraph agent framework)
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-09: Phase 1 Plan 03 Complete (PostgreSQL + MySQL Connectors)
+- PostgreSQLConnector: psycopg2 ThreadedConnectionPool (minconn=1, maxconn=10), lazy import inside connect()
+- MySQLConnector: mysql.connector.pooling.MySQLConnectionPool (pool_size=5), lazy import inside connect()
+- Tenacity retry decorator: 3 attempts, exponential backoff (1s/2s/4s) on ConnectionError/TimeoutError/OSError
+- DatabaseManager refactored: _CONNECTOR_REGISTRY dict replaced with _get_connector() factory for lazy imports
+- All 3 previously-xfail tests now PASSED: test_connection_retry, test_postgresql_mock, test_mysql_mock
+- Full test suite: 31 passed, 0 failed (up from 19 passed, 3 xfailed)
 
 ### 2026-03-09: Phase 1 Plan 02 Complete (Database Connectors)
 - Implemented BaseConnector ABC (5 abstract methods), SchemaTable/ColumnInfo/FKInfo TypedDicts
@@ -68,6 +76,12 @@ progress:
 
 ## Key Decisions
 
+### Phase 1 Plan 03 (2026-03-09)
+- Tenacity retry placed inside test_connection() as local closure — mocker.patch replaces class-level attributes, stripping decorators on connect() itself; wrapping self.connect() inside a locally-decorated function survives the patch
+- DatabaseManager switched from _CONNECTOR_REGISTRY dict to _get_connector() factory — enables lazy imports per dialect without top-level ImportError
+- PostgreSQL uses getconn()/putconn() from ThreadedConnectionPool; MySQL uses get_connection() with connection.close() returning connection to pool automatically
+- get_schema() returns {} (not raises) when fetchall() returns no rows — required for mock tests that don't set up full cursor side effects
+
 ### Phase 1 Plan 02 (2026-03-09)
 - DuckDB PRAGMA foreign_key_list() used as FK fallback — INFORMATION_SCHEMA FK data is incomplete for SQLite-attached files
 - Removed global pytestmark xfail from test_manager.py; per-test xfail marks on Plan-03 tests only
@@ -91,7 +105,7 @@ progress:
 - **Vector:** pinecone-client
 - **LLMs:** groq, openai
 - **Evaluation:** ragas
-- **Testing:** pytest
+- **Testing:** pytest, tenacity
 
 ### Development Approach
 - 12 phases over 3-4 weeks
@@ -110,19 +124,20 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-09T19:05:00Z
+**Last Session:** 2026-03-09T19:10:00Z
 
-**Resume Point:** Completed 01-foundation-core-infrastructure 01-02-PLAN.md
+**Resume Point:** Completed 01-foundation-core-infrastructure 01-03-PLAN.md
 
 **Next Steps:**
-1. `/gsd:execute-phase 1` - Execute Plan 03: PostgreSQL and MySQL connectors
+1. Start Phase 2: LangGraph agent framework setup
+2. All Phase 1 foundation is complete and tested
 
 **Context for Next Session:**
-- DatabaseManager fully functional for DuckDB and SQLite
-- BaseConnector ABC in database/connectors/base.py — all 5 methods proven
-- _CONNECTOR_REGISTRY in database/manager.py — extend with conditional imports for postgresql/mysql
-- Test suite: 19 passed, 3 xfailed (test_connection_retry, test_postgresql_mock, test_mysql_mock)
-- Plan 03 tests expect: DatabaseManager(db_type="postgresql"/"mysql") to work; retry logic on transient ConnectionError
+- DatabaseManager fully functional for all 4 dialects (DuckDB, SQLite, PostgreSQL, MySQL)
+- All connectors use lazy imports for optional extras (psycopg2, mysql-connector-python)
+- Tenacity retry (3 attempts, exponential backoff) active on connection paths
+- Test suite: 31 passed, 0 failed, 0 xfailed
+- Phase 1 requirement DB-001 satisfied
 
 ---
 
@@ -136,4 +151,4 @@ None currently.
 ---
 
 *State file created: 2025-03-08*
-*Next update: After Phase 1 completion*
+*Phase 1 complete: 2026-03-09*
