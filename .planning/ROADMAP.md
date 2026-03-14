@@ -11,7 +11,7 @@
 | Phase | Name | Status | Requirements |
 |-------|------|--------|--------------|
 | 1 | 3/3 | Complete   | 2026-03-09 |
-| 2 | AgentState & LangGraph Skeleton | Not Started | GRAPH-001, GRAPH-002, GRAPH-003 |
+| 2 | 2/3 | In Progress|  |
 | 3 | Vector Schema Retrieval (Pinecone) | Not Started | VECTOR-001, VECTOR-002, VECTOR-003 |
 | 4 | Specialized Agent Nodes | Not Started | AGENT-001, AGENT-002, AGENT-003, AGENT-004 |
 | 5 | Execution & Safety Layer | Not Started | DB-002, DB-003, SAFETY-001 |
@@ -89,11 +89,11 @@ Plans:
 - `tests/graph/test_state.py` - state validation tests
 - `tests/graph/test_graph.py` - graph compilation test
 
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 
 Plans:
-- [ ] 02-01-PLAN.md — AgentState TypedDict + routing conditions + GRAPH-001 test suite (Wave 1)
-- [ ] 02-02-PLAN.md — 9 async placeholder node files + agents/nodes/__init__.py re-exports (Wave 1)
+- [x] 02-01-PLAN.md — AgentState TypedDict + routing conditions + GRAPH-001 test suite (Wave 1)
+- [x] 02-02-PLAN.md — 9 async placeholder node files + agents/nodes/__init__.py re-exports (Wave 1)
 - [ ] 02-03-PLAN.md — graph/builder.py compiled_graph singleton + GRAPH-002/GRAPH-003 integration tests (Wave 2)
 
 **Dependencies:** Phase 1 (project structure)
