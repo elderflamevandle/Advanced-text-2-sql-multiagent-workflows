@@ -133,6 +133,12 @@ Plans:
 - `config/pinecone_config.yaml` - index configuration
 - `tests/vector/test_retrieval.py` - retrieval accuracy tests
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — pyproject.toml dependency fix + EmbeddingGenerator + SchemaGraph + text builders + test scaffold (Wave 1)
+- [ ] 03-02-PLAN.md — BaseRetriever ABC + PineconeRetriever + ChromaRetriever + factory + retrieval tests (Wave 2)
+
 **Dependencies:** Phase 1 (DatabaseManager for schema extraction)
 
 **Risks:**
@@ -540,5 +546,6 @@ Plans:
 *Roadmap created: 2025-03-08*
 *Phase 1 planned: 2026-03-09*
 *Phase 2 planned: 2026-03-09*
+*Phase 3 planned: 2026-03-14*
 *Milestone: v1.0*
 *Estimated duration: 3-4 weeks*
