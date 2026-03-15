@@ -1,7 +1,7 @@
 database:
   default_type: duckdb
   default_path: data/chinook.db
-  query_timeout: 30
+  query_timeout: 60
   schema_cache_enabled: true
 
 llm:
@@ -19,3 +19,12 @@ app:
   human_in_loop_enabled: true
   max_correction_retries: 3
   log_level: INFO
+
+safety:
+  enabled: true
+  config_file: config/safety_config.yaml
+
+hitl:
+  enabled: true
+  timeout_seconds: 300
+  auto_approve_simple: true

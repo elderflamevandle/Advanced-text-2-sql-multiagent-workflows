@@ -1,0 +1,8 @@
+safety:
+  allowed_statements: [SELECT, WITH]
+  blocked_statements: [DROP, DELETE, TRUNCATE, UPDATE, INSERT, ALTER, CREATE, GRANT, REVOKE]
+  audit_logging: true
+
+execution:
+  timeout_seconds: 60
+  max_rows: 1000

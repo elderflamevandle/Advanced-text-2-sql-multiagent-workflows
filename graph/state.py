@@ -13,7 +13,10 @@ class AgentState(TypedDict):
     relevant_tables: Optional[list]
     query_plan: Optional[str]
     generated_sql: Optional[str]
+    sql_explanation: Optional[str]
     db_results: Optional[list]
+    execution_metadata: Optional[dict]
+    approval_status: Optional[str]
     error_log: Optional[str]
     retry_count: int
     final_answer: Optional[str]
