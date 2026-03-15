@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 5
 status: unknown
-last_updated: "2026-03-15T09:08:25.638Z"
+last_updated: "2026-03-15T09:15:36.425Z"
 progress:
   total_phases: 12
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 12
-  completed_plans: 11
-  percent: 92
+  completed_plans: 12
+  percent: 100
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
@@ -23,15 +23,26 @@ progress:
 
 ## Current Status
 
-**Progress:** [█████████░] 92%
+**Progress:** [██████████] 100%
 
-**Active Work:** Phase 5 Plan 01 complete — SQL safety scanner (scan_sql, audit_blocked_query), executor_node (safety gate, LIMIT injection, 60s timeout, structured errors), AgentState expanded to 17 fields; 39 new tests; 134 total tests green
+**Active Work:** Phase 5 Plan 02 complete — HITL approval gate node (hitl_node with LangGraph interrupt, _is_simple_query, resumption handling), graph rewired sql_generator->hitl->executor/formatter, route_after_hitl; 23 new tests; 157 total tests green. Phase 5 (execution safety layer) complete.
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-15: Phase 5 Plan 02 Complete (HITL Approval Gate Node)
+- agents/nodes/hitl.py: hitl_node with LangGraph interrupt() for complex queries (JOIN/subquery/UNION/CTE), auto-approve for simple SELECTs, resumption handling (approved/rejected/edited)
+- _is_simple_query(): word-boundary regex for JOIN/UNION, CTE via WITH prefix, subquery via SELECT count
+- graph/conditions.py: route_after_hitl added (rejected -> formatter, else -> executor)
+- graph/builder.py: sql_generator -> hitl -> conditional(executor|formatter); 10-node graph
+- agents/nodes/__init__.py: hitl_node added (10 node exports)
+- tests/agents/test_hitl.py: 17 AGENT-010 unit tests (all branches)
+- tests/graph/test_graph.py: 6 new HITL graph integration tests; Mermaid check updated
+- Full test suite: 157 passed, 0 failed (134 prior + 23 new AGENT-010)
+- AGENT-010 requirement satisfied; Phase 5 execution safety layer complete
 
 ### 2026-03-15: Phase 5 Plan 01 Complete (SQL Safety Scanner and Executor Node)
 - database/safety.py: scan_sql() strips string literals + block/line comments before keyword extraction (prevents false positives on updated_at, delete_flag, string literals with DROP/INSERT); audit_blocked_query() structured WARNING log
@@ -146,6 +157,12 @@ progress:
 
 ## Key Decisions
 
+### Phase 5 Plan 02 (2026-03-15)
+- interrupt() called via lazy import inside hitl_node — avoids import-time side effects; allows sys.modules mock injection in tests before module load
+- _is_simple_query uses word-boundary regex for JOIN/UNION and SELECT count for subqueries — no AST needed for safety heuristic
+- Resumption handling via approval_status check at top of hitl_node — LangGraph re-enters the same node on resume; checking existing approval_status prevents re-triggering interrupt
+- route_after_hitl returns 'executor' for None approval_status — backward-compatible default for states without approval_status
+
 ### Phase 5 Plan 01 (2026-03-15)
 - Strip string literals and block/line comments before SQL keyword extraction — prevents false positives on column names like `updated_at` or string values containing `DROP`; ordering matters: block comments first, then line comments, then quoted strings
 - error_log is a structured dict (not plain string) — enables route_after_executor and correction loop to inspect error_type programmatically without string parsing; dict is truthy so existing routing still works
@@ -247,21 +264,21 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T09:06:50Z
+**Last Session:** 2026-03-15T09:14:26Z
 
-**Resume Point:** Completed 05-execution-safety-layer 05-01-PLAN.md
+**Resume Point:** Completed 05-execution-safety-layer 05-02-PLAN.md
 
 **Next Steps:**
-1. Phase 5 Plan 01 complete — DB-002, DB-003, SAFETY-001, AGENT-005 satisfied
-2. Proceed to Phase 5 Plan 02 or next phase (correction loop / formatter)
+1. Phase 5 complete — DB-002, DB-003, SAFETY-001, AGENT-005, AGENT-010 all satisfied
+2. Proceed to Phase 6 (correction loop: correction_plan_node, correction_sql_node full implementations)
 
 **Context for Next Session:**
-- database/safety.py: scan_sql() (literal/comment stripping, keyword extraction), audit_blocked_query()
-- agents/nodes/executor.py: null checks, safety gate, LIMIT 1000 injection, ThreadPoolExecutor 60s timeout, structured error dicts
-- graph/state.py: AgentState 17 fields — sql_explanation, execution_metadata, approval_status added
-- error_log is now a structured dict (error_type, message, dialect, failed_sql, hint) — not plain string
-- Test suite: 134 passed, 0 failed, 0 xfailed
-- DB-002, DB-003, SAFETY-001, AGENT-005 all satisfied
+- agents/nodes/hitl.py: hitl_node (LangGraph interrupt, auto-approve, resumption), _is_simple_query()
+- graph/conditions.py: route_after_hitl, route_after_gatekeeper, route_after_executor
+- graph/builder.py: 10-node graph, sql_generator -> hitl -> conditional(executor|formatter)
+- agents/nodes/__init__.py: 10 node exports including hitl_node
+- Test suite: 157 passed, 0 failed, 0 xfailed
+- AGENT-010 satisfied; Phase 5 (execution safety layer) fully complete
 
 ---
 
