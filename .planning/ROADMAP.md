@@ -13,7 +13,7 @@
 | 1 | 3/3 | Complete   | 2026-03-09 |
 | 2 | 3/3 | Complete   | 2026-03-15 |
 | 3 | 2/2 | Complete   | 2026-03-15 |
-| 4 | Specialized Agent Nodes | Not Started | AGENT-001, AGENT-002, AGENT-003, AGENT-004 |
+| 4 | Specialized Agent Nodes | Planned | AGENT-001, AGENT-002, AGENT-003, AGENT-004, LLM-003 |
 | 5 | Execution & Safety Layer | Not Started | DB-002, DB-003, SAFETY-001 |
 | 6 | Error Correction Loop | Not Started | ERROR-001, ERROR-002, ERROR-003 |
 | 7 | LLM Integration & Fallback | Not Started | LLM-001, LLM-002, LLM-003 |
@@ -159,6 +159,7 @@ Plans:
 - AGENT-002: Schema Linker Node
 - AGENT-003: Query Planner Node
 - AGENT-004: SQL Generator Node
+- LLM-003: Specialized Prompts
 
 **Success Criteria:**
 - ✓ Gatekeeper validates queries, detects conversational vs SQL requests
@@ -168,12 +169,19 @@ Plans:
 - ✓ Prompts optimized for each agent role
 - ✓ Test: "Show total sales by region" → valid PostgreSQL SELECT query
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — AgentState expansion (resolved_query), routing update, gatekeeper node, schema linker node, test infrastructure (Wave 1)
+- [ ] 04-02-PLAN.md — Query planner node, SQL generator node with dialect support, full test coverage (Wave 2)
+
 **Deliverables:**
-- `agents/gatekeeper.py` - query validation
-- `agents/schema_linker.py` - schema retrieval integration
-- `agents/query_planner.py` - CoT planning
-- `agents/sql_generator.py` - SQL generation
-- `utils/prompts/` - agent-specific prompts
+- `agents/nodes/gatekeeper.py` - query validation and classification
+- `agents/nodes/schema_linker.py` - schema retrieval integration
+- `agents/nodes/query_planner.py` - CoT planning
+- `agents/nodes/sql_generator.py` - SQL generation
+- `graph/state.py` - resolved_query field added
+- `graph/conditions.py` - expanded routing
 - `tests/agents/` - unit tests for each agent
 
 **Dependencies:**
@@ -547,5 +555,6 @@ Plans:
 *Phase 1 planned: 2026-03-09*
 *Phase 2 planned: 2026-03-09*
 *Phase 3 planned: 2026-03-14*
+*Phase 4 planned: 2026-03-15*
 *Milestone: v1.0*
 *Estimated duration: 3-4 weeks*
