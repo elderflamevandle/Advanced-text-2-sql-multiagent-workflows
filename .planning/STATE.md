@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 3
 status: unknown
-last_updated: "2026-03-15T01:07:07.579Z"
+last_updated: "2026-03-15T02:55:36.817Z"
 progress:
   total_phases: 12
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_plans: 8
+  completed_plans: 7
+  percent: 88
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
@@ -23,15 +23,23 @@ progress:
 
 ## Current Status
 
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 88%
 
-**Active Work:** Phase 2 complete — graph/builder.py compiled_graph singleton built; all 3 plans executed; Phase 3 (Gatekeeper Agent) next
+**Active Work:** Phase 3 Plan 01 complete — EmbeddingGenerator + SchemaGraph + text builders implemented; vector test suite 18 tests all passing; 59 total tests green
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-14: Phase 3 Plan 01 Complete (Embedding Generation and FK Schema Graph)
+- vector/embeddings.py: EmbeddingGenerator (lazy BGE model, lru_cache query embeds, batched doc embeds), build_table_text, build_column_text
+- vector/schema_graph.py: SchemaGraph (FK adjacency dict, expand_tables 1-hop forward, generate_join_hints)
+- pyproject.toml: pinecone-client removed from core deps; vector extras group added (pinecone>=5.1.0, sentence-transformers>=5.0.0, chromadb>=0.5.0)
+- tests/vector/: conftest.py (3 Chinook fixtures) + test_embeddings.py (10 tests) + test_schema_graph.py (8 tests)
+- Full test suite: 59 passed, 0 failed (41 prior + 18 new VECTOR-002/003)
+- VECTOR-002 and VECTOR-003 requirements satisfied
 
 ### 2026-03-14: Phase 2 Plan 01 Complete (AgentState TypedDict and Routing Functions)
 - graph/state.py: AgentState TypedDict with 13 fields, Annotated[list, add_messages] reducer confirmed correct
@@ -100,6 +108,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 3 Plan 01 (2026-03-14)
+- pinecone-client removed from core deps; pinecone>=5.1.0 placed in vector optional extras only — avoids ImportError when vector deps not installed
+- EmbeddingGenerator lazy-loads SentenceTransformer inside _get_model() — follows project lazy-import pattern for optional extras
+- lru_cache on embed_query_cached requires __hash__=id(self) and __eq__=is — Python requirement for caching on instance methods
+- SchemaGraph expand_tables uses forward-only FK direction — avoids context explosion from high-fan-in tables like Customer
+- embed_documents uses show_progress_bar=False with manual INFO logging — consistent with project logger pattern
+
 ### Phase 2 Plan 01 (2026-03-14)
 - add_messages imported from langgraph.graph.message (canonical path in 0.3.34, not langchain_core)
 - db_manager typed as Optional[object] — holds DatabaseManager at runtime, None in tests; None is JSON-serializable
@@ -167,22 +182,21 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T00:46:13.730Z
+**Last Session:** 2026-03-15T02:55:36.791Z
 
-**Resume Point:** Completed 02-agentstate-langgraph-skeleton 02-03-PLAN.md (Phase 2 fully complete)
+**Resume Point:** Completed 03-vector-schema-retrieval-pinecone 03-01-PLAN.md
 
 **Next Steps:**
-1. Execute Phase 3: Gatekeeper Agent (real LLM node logic replacing placeholder)
-2. Phase 2 fully complete — all 3 plans executed, GRAPH-001/002/003 satisfied
+1. Execute Phase 3 Plan 02: Pinecone vector store and schema retriever
+2. Phase 3 Plan 01 complete — VECTOR-002 and VECTOR-003 satisfied
 
 **Context for Next Session:**
-- graph/builder.py: compiled_graph singleton, MemorySaver checkpointer, 9 nodes, 2 conditional edges
-- graph/state.py: AgentState TypedDict with 13 fields, Annotated[list, add_messages]
-- graph/conditions.py: route_after_gatekeeper, route_after_executor routing functions (synchronous)
-- agents/nodes/__init__.py: 9 async placeholder nodes (all return {})
-- tests/graph/test_graph.py: 5 GRAPH-002/003 integration tests passing
-- Test suite: 41 passed, 0 failed, 0 xfailed
-- GRAPH-001, GRAPH-002, GRAPH-003 all satisfied
+- vector/embeddings.py: EmbeddingGenerator (lazy BGE, lru_cache, batched docs), build_table_text, build_column_text
+- vector/schema_graph.py: SchemaGraph (FK adjacency, expand_tables 1-hop, generate_join_hints)
+- pyproject.toml: vector extras group with pinecone>=5.1.0, sentence-transformers>=5.0.0, chromadb>=0.5.0
+- tests/vector/: 18 tests passing (10 embeddings + 8 schema graph)
+- Test suite: 59 passed, 0 failed, 0 xfailed
+- VECTOR-002, VECTOR-003 satisfied
 
 ---
 
