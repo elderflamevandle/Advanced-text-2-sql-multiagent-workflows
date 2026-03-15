@@ -14,7 +14,7 @@
 | 2 | 3/3 | Complete   | 2026-03-15 |
 | 3 | 2/2 | Complete   | 2026-03-15 |
 | 4 | 2/2 | Complete   | 2026-03-15 |
-| 5 | Execution & Safety Layer | Not Started | DB-002, DB-003, SAFETY-001 |
+| 5 | Execution & Safety Layer | Planned | DB-002, DB-003, SAFETY-001, AGENT-005, AGENT-010 |
 | 6 | Error Correction Loop | Not Started | ERROR-001, ERROR-002, ERROR-003 |
 | 7 | LLM Integration & Fallback | Not Started | LLM-001, LLM-002, LLM-003 |
 | 8 | Streamlit Frontend | Not Started | UI-001, UI-002, UI-003, UI-004 |
@@ -197,7 +197,7 @@ Plans:
 
 ## Phase 5: Execution & Safety Layer
 
-**Goal:** Safe SQL execution with keyword scanning, read-only access, and dialect handling
+**Goal:** Safe SQL execution with statement-level safety scanning, structured error reporting, HITL approval gate, and dialect-aware error handling
 
 **Duration:** 2 days
 
@@ -205,22 +205,40 @@ Plans:
 - DB-002: Read-Only Execution
 - DB-003: Dialect-Specific SQL
 - SAFETY-001: Destructive Query Prevention
+- AGENT-005: Execution & Safety Node
+- AGENT-010: Human-in-the-Loop Node
 
 **Success Criteria:**
 - ✓ Executor node executes SQL via DatabaseManager
-- ✓ Keyword scanner blocks DROP, DELETE, TRUNCATE, UPDATE, INSERT, ALTER, CREATE
-- ✓ Read-only database user enforcement
-- ✓ Execution timeout (30s default, configurable)
-- ✓ Transaction auto-rollback on error
-- ✓ Error messages include dialect context
-- ✓ Test: Attempt "DROP TABLE users" → blocked before execution
+- ✓ Statement-level scanner blocks DROP, DELETE, TRUNCATE, UPDATE, INSERT, ALTER, CREATE, GRANT, REVOKE
+- ✓ No false positives on column names like `updated_at` or `delete_flag`
+- ✓ Execution timeout (60s default, configurable)
+- ✓ Auto LIMIT 1000 injection on queries without LIMIT
+- ✓ Structured error dict (error_type, message, dialect, failed_sql, hint) for correction loop
+- ✓ Error messages include dialect prefix
+- ✓ HITL node with LangGraph interrupt for complex queries
+- ✓ Simple queries auto-approved, complex queries require user review
+- ✓ HITL configurable on/off
+- ✓ Test: "DROP TABLE users" blocked before execution
+- ✓ Test: Complex query triggers HITL interrupt
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Safety scanner, config, AgentState expansion, executor node with structured errors and timeout (Wave 1)
+- [ ] 05-02-PLAN.md — HITL node with LangGraph interrupt, graph rewiring sql_generator->hitl->executor (Wave 2)
 
 **Deliverables:**
-- `agents/executor.py` - execution node
-- `database/safety.py` - keyword scanner
-- `database/dialect_handler.py` - dialect-specific logic
-- `config/safety_config.yaml` - blocked keywords list
+- `agents/nodes/executor.py` - execution node
+- `agents/nodes/hitl.py` - human-in-the-loop approval gate
+- `database/safety.py` - statement-level scanner
+- `config/safety_config.yaml` - blocked/allowed statement types
+- `graph/state.py` - sql_explanation, execution_metadata, approval_status fields
+- `graph/builder.py` - updated with HITL node
+- `graph/conditions.py` - route_after_hitl
 - `tests/safety/test_keyword_scanner.py` - safety tests
+- `tests/agents/test_executor.py` - executor tests
+- `tests/agents/test_hitl.py` - HITL tests
 
 **Dependencies:**
 - Phase 1 (DatabaseManager)
@@ -229,7 +247,7 @@ Plans:
 **Risks:**
 - Bypassing keyword scanner with SQL injection
 - Timeout handling for long-running queries
-- Dialect edge cases
+- LangGraph interrupt mechanism compatibility
 
 ---
 
@@ -556,5 +574,6 @@ Plans:
 *Phase 2 planned: 2026-03-09*
 *Phase 3 planned: 2026-03-14*
 *Phase 4 planned: 2026-03-15*
+*Phase 5 planned: 2026-03-15*
 *Milestone: v1.0*
 *Estimated duration: 3-4 weeks*
