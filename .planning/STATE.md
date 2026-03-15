@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 3
 status: unknown
-last_updated: "2026-03-15T02:55:36.817Z"
+last_updated: "2026-03-15T03:00:52.642Z"
 progress:
   total_phases: 12
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 7
-  percent: 88
+  completed_plans: 8
+  percent: 100
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
@@ -23,15 +23,24 @@ progress:
 
 ## Current Status
 
-**Progress:** [█████████░] 88%
+**Progress:** [██████████] 100%
 
-**Active Work:** Phase 3 Plan 01 complete — EmbeddingGenerator + SchemaGraph + text builders implemented; vector test suite 18 tests all passing; 59 total tests green
+**Active Work:** Phase 3 Plan 02 complete — BaseRetriever ABC, PineconeRetriever, ChromaRetriever, get_retriever factory; 14 retrieval tests all passing; 73 total tests green
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-14: Phase 3 Plan 02 Complete (BaseRetriever with Pinecone and ChromaDB Backends)
+- vector/retriever.py: BaseRetriever ABC, PineconeRetriever (two-stage retrieval, serverless index), ChromaRetriever (PersistentClient, sanitized collection names), get_retriever() factory
+- config/pinecone_config.yaml: index_name text2sql-schema, dimension 1024, cosine metric, aws us-east-1
+- vector/__init__.py: re-exports BaseRetriever, get_retriever, EmbeddingGenerator, SchemaGraph, text builders
+- tests/vector/test_retrieval.py: 14 unit tests, all backends fully mocked (sys.modules injection for uninstalled optional deps)
+- Auto-fix: chromadb mock via sys.modules injection (not installed as package — patch("chromadb.X") fails with ModuleNotFoundError)
+- Full test suite: 73 passed, 0 failed (59 prior + 14 new VECTOR-001/VECTOR-003)
+- VECTOR-001 and VECTOR-003 requirements satisfied
 
 ### 2026-03-14: Phase 3 Plan 01 Complete (Embedding Generation and FK Schema Graph)
 - vector/embeddings.py: EmbeddingGenerator (lazy BGE model, lru_cache query embeds, batched doc embeds), build_table_text, build_column_text
@@ -108,6 +117,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 3 Plan 02 (2026-03-14)
+- Lazy import pinecone/chromadb inside __init__ — keeps optional extras from causing ImportError at package import time
+- schema_cache stored on instance during embed_schema — cleaner than passing schema to every retrieve_tables call
+- ChromaRetriever._collection_name sanitizes colons to underscores — ChromaDB rejects colons in collection names
+- sys.modules injection for chromadb/pinecone mocks — both are uninstalled optional extras; patch.dict(sys.modules) is the correct approach
+- get_retriever() factory uses os.getenv (not os.environ[]) — avoids KeyError when PINECONE_API_KEY absent
+
 ### Phase 3 Plan 01 (2026-03-14)
 - pinecone-client removed from core deps; pinecone>=5.1.0 placed in vector optional extras only — avoids ImportError when vector deps not installed
 - EmbeddingGenerator lazy-loads SentenceTransformer inside _get_model() — follows project lazy-import pattern for optional extras
@@ -182,21 +198,23 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T02:55:36.791Z
+**Last Session:** 2026-03-15T03:00:52.636Z
 
-**Resume Point:** Completed 03-vector-schema-retrieval-pinecone 03-01-PLAN.md
+**Resume Point:** Completed 03-vector-schema-retrieval-pinecone 03-02-PLAN.md
 
 **Next Steps:**
-1. Execute Phase 3 Plan 02: Pinecone vector store and schema retriever
-2. Phase 3 Plan 01 complete — VECTOR-002 and VECTOR-003 satisfied
+1. Phase 3 complete — VECTOR-001, VECTOR-002, VECTOR-003 all satisfied
+2. Proceed to Phase 4: Schema Linker Node
 
 **Context for Next Session:**
+- vector/retriever.py: BaseRetriever ABC, PineconeRetriever (two-stage, FK expansion), ChromaRetriever (local fallback), get_retriever()
 - vector/embeddings.py: EmbeddingGenerator (lazy BGE, lru_cache, batched docs), build_table_text, build_column_text
 - vector/schema_graph.py: SchemaGraph (FK adjacency, expand_tables 1-hop, generate_join_hints)
+- config/pinecone_config.yaml: index_name text2sql-schema, dimension 1024, cosine, aws us-east-1
 - pyproject.toml: vector extras group with pinecone>=5.1.0, sentence-transformers>=5.0.0, chromadb>=0.5.0
-- tests/vector/: 18 tests passing (10 embeddings + 8 schema graph)
-- Test suite: 59 passed, 0 failed, 0 xfailed
-- VECTOR-002, VECTOR-003 satisfied
+- tests/vector/: 32 tests passing (10 embeddings + 8 schema graph + 14 retrieval)
+- Test suite: 73 passed, 0 failed, 0 xfailed
+- VECTOR-001, VECTOR-002, VECTOR-003 all satisfied
 
 ---
 
