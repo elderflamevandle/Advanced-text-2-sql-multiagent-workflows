@@ -1,12 +1,13 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from graph.state import AgentState
-from graph.conditions import route_after_gatekeeper, route_after_executor
+from graph.conditions import route_after_gatekeeper, route_after_hitl, route_after_executor
 from agents.nodes import (
     gatekeeper_node,
     schema_linker_node,
     query_planner_node,
     sql_generator_node,
+    hitl_node,
     executor_node,
     correction_plan_node,
     correction_sql_node,
@@ -22,6 +23,7 @@ def build_graph():
     wf.add_node("schema_linker", schema_linker_node)
     wf.add_node("query_planner", query_planner_node)
     wf.add_node("sql_generator", sql_generator_node)
+    wf.add_node("hitl", hitl_node)
     wf.add_node("executor", executor_node)
     wf.add_node("correction_plan", correction_plan_node)
     wf.add_node("correction_sql", correction_sql_node)
@@ -37,7 +39,12 @@ def build_graph():
     )
     wf.add_edge("schema_linker", "query_planner")
     wf.add_edge("query_planner", "sql_generator")
-    wf.add_edge("sql_generator", "executor")
+    wf.add_edge("sql_generator", "hitl")
+    wf.add_conditional_edges(
+        "hitl",
+        route_after_hitl,
+        {"executor": "executor", "formatter": "formatter"},
+    )
     wf.add_conditional_edges(
         "executor",
         route_after_executor,

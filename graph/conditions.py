@@ -8,6 +8,14 @@ def route_after_gatekeeper(state: AgentState) -> str:
     return "schema_linker"
 
 
+def route_after_hitl(state: AgentState) -> str:
+    """Route to executor on approval, formatter on rejection."""
+    status = state.get("approval_status")
+    if status == "rejected":
+        return "formatter"
+    return "executor"  # approved, auto_approved, or None
+
+
 def route_after_executor(state: AgentState) -> str:
     """Route to correction loop on error (up to max_retries=2), else formatter."""
     if state.get("error_log") is not None:

@@ -3,6 +3,7 @@ import uuid
 
 import pytest
 from graph.builder import compiled_graph
+from graph.conditions import route_after_hitl
 from tests.graph.conftest import make_initial_state
 
 
@@ -26,9 +27,9 @@ def test_graph_traverses_end_to_end():
 
 
 def test_graph_draw_mermaid():
-    """GRAPH-002: Graph is visualizable and includes all nodes."""
+    """GRAPH-002: Graph is visualizable and includes all nodes (10 total with HITL)."""
     mermaid = compiled_graph.get_graph().draw_mermaid()
-    for node in ["gatekeeper", "evaluator", "correction_plan", "schema_linker"]:
+    for node in ["gatekeeper", "evaluator", "correction_plan", "schema_linker", "hitl"]:
         assert node in mermaid, f"Node missing from Mermaid: {node}"
 
 
@@ -65,3 +66,39 @@ def test_conversational_shortcut():
     # Nodes are placeholders returning {} so state unchanged, but graph must complete
     assert isinstance(result, dict)
     assert result.get("user_query") == "hello there"
+
+
+def test_hitl_node_present_in_graph():
+    """GRAPH-002: 'hitl' node exists in compiled graph (10 nodes total)."""
+    graph_obj = compiled_graph.get_graph()
+    nodes = list(graph_obj.nodes)
+    assert "hitl" in nodes, f"'hitl' missing from graph nodes: {nodes}"
+
+
+def test_sql_generator_to_hitl_edge():
+    """GRAPH-002: sql_generator -> hitl edge exists in graph."""
+    graph_obj = compiled_graph.get_graph()
+    edges = [(e.source, e.target) for e in graph_obj.edges]
+    assert ("sql_generator", "hitl") in edges, (
+        f"sql_generator -> hitl edge missing. Edges: {edges}"
+    )
+
+
+def test_route_after_hitl_approved():
+    """route_after_hitl routes 'approved' status to executor."""
+    assert route_after_hitl({"approval_status": "approved"}) == "executor"
+
+
+def test_route_after_hitl_auto_approved():
+    """route_after_hitl routes 'auto_approved' status to executor."""
+    assert route_after_hitl({"approval_status": "auto_approved"}) == "executor"
+
+
+def test_route_after_hitl_rejected():
+    """route_after_hitl routes 'rejected' status to formatter."""
+    assert route_after_hitl({"approval_status": "rejected"}) == "formatter"
+
+
+def test_route_after_hitl_none():
+    """route_after_hitl routes None approval_status to executor (default path)."""
+    assert route_after_hitl({"approval_status": None}) == "executor"
