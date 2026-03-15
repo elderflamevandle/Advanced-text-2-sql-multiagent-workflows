@@ -590,8 +590,8 @@
 | INFRA-002 | Phase 1 | Complete |
 | INFRA-003 | Phase 12 | Pending |
 | DB-001 | Phase 2 | Complete |
-| DB-002 | Phase 5 | Pending |
-| DB-003 | Phase 2 | Pending |
+| DB-002 | Phase 5 | Complete |
+| DB-003 | Phase 2 | Complete |
 | GRAPH-001 | Phase 1 | Complete |
 | GRAPH-002 | Phase 2 | Complete |
 | GRAPH-003 | Phase 9 | Complete |
@@ -599,7 +599,7 @@
 | AGENT-002 | Phase 3 | Complete |
 | AGENT-003 | Phase 4 | Complete |
 | AGENT-004 | Phase 4 | Complete |
-| AGENT-005 | Phase 5 | Pending |
+| AGENT-005 | Phase 5 | Complete |
 | AGENT-006 | Phase 6 | Pending |
 | AGENT-007 | Phase 6 | Pending |
 | AGENT-008 | Phase 4 | Pending |

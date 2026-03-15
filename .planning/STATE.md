@@ -2,36 +2,46 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 4
+current_phase: 5
 status: unknown
-last_updated: "2026-03-15T07:12:53.321Z"
+last_updated: "2026-03-15T09:08:25.638Z"
 progress:
   total_phases: 12
   completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_plans: 12
+  completed_plans: 11
+  percent: 92
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
 
-**Last Updated:** 2026-03-14
+**Last Updated:** 2026-03-15
 **Milestone:** v1.0 - Production-Ready Multi-Agent Text-to-SQL System
-**Current Phase:** 4
+**Current Phase:** 5
 
 ---
 
 ## Current Status
 
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 92%
 
-**Active Work:** Phase 4 Plan 02 complete — query_planner_node (JSON plan, fence-strip, malformed fallback), sql_generator_node (dialect hints, SELECT/WITH validation, explanation); 12 new tests; 95 total tests green
+**Active Work:** Phase 5 Plan 01 complete — SQL safety scanner (scan_sql, audit_blocked_query), executor_node (safety gate, LIMIT injection, 60s timeout, structured errors), AgentState expanded to 17 fields; 39 new tests; 134 total tests green
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-15: Phase 5 Plan 01 Complete (SQL Safety Scanner and Executor Node)
+- database/safety.py: scan_sql() strips string literals + block/line comments before keyword extraction (prevents false positives on updated_at, delete_flag, string literals with DROP/INSERT); audit_blocked_query() structured WARNING log
+- config/safety_config.yaml: allowed [SELECT, WITH], blocked 9 DDL/DML types, execution timeout 60s, max_rows 1000
+- agents/nodes/executor.py: null checks (missing_sql, no_connection), safety scan gate, LIMIT 1000 injection, ThreadPoolExecutor timeout (60s), structured error dicts (error_type, message, dialect, failed_sql, hint)
+- graph/state.py: AgentState 14→17 fields: sql_explanation, execution_metadata, approval_status added
+- config/config.yaml: query_timeout 30→60, safety section (enabled: true), hitl section
+- Auto-fix: updated tests/graph/test_state.py EXPECTED_FIELDS (14→17) after AgentState expansion (Rule 1)
+- Full test suite: 134 passed, 0 failed (95 prior + 39 new SAFETY-001/DB-002/DB-003/AGENT-005)
+- DB-002, DB-003, SAFETY-001, AGENT-005 requirements satisfied
 
 ### 2026-03-15: Phase 4 Plan 02 Complete (Query Planner and SQL Generator Agent Nodes)
 - agents/nodes/query_planner.py: _PLANNER_PROMPT constant (LLM-003), 9-key JSON plan, _DEFAULT_PLAN fallback, markdown fence stripping
@@ -136,6 +146,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 5 Plan 01 (2026-03-15)
+- Strip string literals and block/line comments before SQL keyword extraction — prevents false positives on column names like `updated_at` or string values containing `DROP`; ordering matters: block comments first, then line comments, then quoted strings
+- error_log is a structured dict (not plain string) — enables route_after_executor and correction loop to inspect error_type programmatically without string parsing; dict is truthy so existing routing still works
+- ThreadPoolExecutor(max_workers=1) with future.result(timeout=N) for query timeout — cleaner than asyncio.wait_for with synchronous execute_query API; avoids event loop nesting issues
+- _get_timeout() is a plain function (not cached constant) — allows tests to patch via patch('agents.nodes.executor._get_timeout', return_value=0.1) for fast timeout tests
+- LIMIT injection via simple regex search — no AST needed; appends to outermost query only, correct for SELECT and WITH (CTE) statements
+
 ### Phase 4 Plan 02 (2026-03-15)
 - sys.modules injection + importlib.reload() pattern reused for query_planner and sql_generator lazy ChatGroq mocking
 - Single LLM call with SQL:/EXPLANATION: output format — re.split on EXPLANATION: label cleanly separates SQL from explanation
@@ -230,21 +247,21 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T07:12:53.306Z
+**Last Session:** 2026-03-15T09:06:50Z
 
-**Resume Point:** Completed 04-specialized-agent-nodes 04-02-PLAN.md
+**Resume Point:** Completed 05-execution-safety-layer 05-01-PLAN.md
 
 **Next Steps:**
-1. Phase 4 Plan 02 complete — AGENT-003, AGENT-004, LLM-003 satisfied
-2. Proceed to Phase 5 (next phase)
+1. Phase 5 Plan 01 complete — DB-002, DB-003, SAFETY-001, AGENT-005 satisfied
+2. Proceed to Phase 5 Plan 02 or next phase (correction loop / formatter)
 
 **Context for Next Session:**
-- agents/nodes/query_planner.py: _PLANNER_PROMPT, 9-key JSON plan, _DEFAULT_PLAN fallback, fence-strip
-- agents/nodes/sql_generator.py: _GENERATOR_PROMPT, _DIALECT_REMINDERS, _validate_sql, SQL:/EXPLANATION: split
-- All 4 agent nodes complete: gatekeeper, schema_linker, query_planner, sql_generator
-- tests/agents/: conftest.py, 7 gatekeeper + 3 schema_linker + 5 query_planner + 7 sql_generator tests
-- Test suite: 95 passed, 0 failed, 0 xfailed
-- AGENT-001, AGENT-002, AGENT-003, AGENT-004, LLM-003 all satisfied
+- database/safety.py: scan_sql() (literal/comment stripping, keyword extraction), audit_blocked_query()
+- agents/nodes/executor.py: null checks, safety gate, LIMIT 1000 injection, ThreadPoolExecutor 60s timeout, structured error dicts
+- graph/state.py: AgentState 17 fields — sql_explanation, execution_metadata, approval_status added
+- error_log is now a structured dict (error_type, message, dialect, failed_sql, hint) — not plain string
+- Test suite: 134 passed, 0 failed, 0 xfailed
+- DB-002, DB-003, SAFETY-001, AGENT-005 all satisfied
 
 ---
 

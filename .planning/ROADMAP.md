@@ -14,7 +14,7 @@
 | 2 | 3/3 | Complete   | 2026-03-15 |
 | 3 | 2/2 | Complete   | 2026-03-15 |
 | 4 | 2/2 | Complete   | 2026-03-15 |
-| 5 | Execution & Safety Layer | Planned | DB-002, DB-003, SAFETY-001, AGENT-005, AGENT-010 |
+| 5 | 1/2 | In Progress|  |
 | 6 | Error Correction Loop | Not Started | ERROR-001, ERROR-002, ERROR-003 |
 | 7 | LLM Integration & Fallback | Not Started | LLM-001, LLM-002, LLM-003 |
 | 8 | Streamlit Frontend | Not Started | UI-001, UI-002, UI-003, UI-004 |
@@ -222,7 +222,7 @@ Plans:
 - ✓ Test: "DROP TABLE users" blocked before execution
 - ✓ Test: Complex query triggers HITL interrupt
 
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 05-01-PLAN.md — Safety scanner, config, AgentState expansion, executor node with structured errors and timeout (Wave 1)
