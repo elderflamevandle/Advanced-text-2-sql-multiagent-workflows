@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 4
 status: unknown
-last_updated: "2026-03-15T07:07:56.371Z"
+last_updated: "2026-03-15T07:12:53.321Z"
 progress:
   total_phases: 12
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 10
-  completed_plans: 9
-  percent: 90
+  completed_plans: 10
+  percent: 100
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
@@ -23,15 +23,24 @@ progress:
 
 ## Current Status
 
-**Progress:** [█████████░] 90%
+**Progress:** [██████████] 100%
 
-**Active Work:** Phase 4 Plan 01 complete — gatekeeper_node (4-category LLM classification, follow-up rewrite, NL safety), schema_linker_node (vector retrieval, full-schema fallback); 10 new tests; 83 total tests green
+**Active Work:** Phase 4 Plan 02 complete — query_planner_node (JSON plan, fence-strip, malformed fallback), sql_generator_node (dialect hints, SELECT/WITH validation, explanation); 12 new tests; 95 total tests green
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-15: Phase 4 Plan 02 Complete (Query Planner and SQL Generator Agent Nodes)
+- agents/nodes/query_planner.py: _PLANNER_PROMPT constant (LLM-003), 9-key JSON plan, _DEFAULT_PLAN fallback, markdown fence stripping
+- agents/nodes/sql_generator.py: _GENERATOR_PROMPT constant (LLM-003), _DIALECT_REMINDERS (postgres/mysql/sqlite/duckdb), _validate_sql, SQL:/EXPLANATION: output split
+- tests/agents/test_query_planner.py: 5 AGENT-003 unit tests
+- tests/agents/test_sql_generator.py: 7 AGENT-004 unit tests
+- Auto-fix: none needed — sys.modules injection pattern from Plan 01 reused cleanly
+- Full test suite: 95 passed, 0 failed (83 prior + 12 new AGENT-003/AGENT-004/LLM-003)
+- AGENT-003, AGENT-004, LLM-003 requirements satisfied
 
 ### 2026-03-15: Phase 4 Plan 01 Complete (Gatekeeper and Schema Linker Agent Nodes)
 - graph/state.py: added resolved_query field (14 fields total)
@@ -127,6 +136,12 @@ progress:
 
 ## Key Decisions
 
+### Phase 4 Plan 02 (2026-03-15)
+- sys.modules injection + importlib.reload() pattern reused for query_planner and sql_generator lazy ChatGroq mocking
+- Single LLM call with SQL:/EXPLANATION: output format — re.split on EXPLANATION: label cleanly separates SQL from explanation
+- _validate_sql strips fences before SELECT/WITH prefix check — fence presence would fail the prefix assertion otherwise
+- _DEFAULT_PLAN copy returned via dict() — prevents cross-test mutation of module-level default
+
 ### Phase 4 Plan 01 (2026-03-15)
 - sys.modules injection + importlib.reload() for gatekeeper tests — lazy-imported ChatGroq inside function body is never bound at module level; patch() fails; sys.modules injection forces re-import to pick up mock
 - Destructive NL safety check runs before LLM call — saves tokens and prevents any LLM-assisted workaround; patterns include delete/drop/truncate/remove all/destroy/erase
@@ -215,22 +230,21 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T07:07:56.364Z
+**Last Session:** 2026-03-15T07:12:53.306Z
 
-**Resume Point:** Completed 04-specialized-agent-nodes 04-01-PLAN.md
+**Resume Point:** Completed 04-specialized-agent-nodes 04-02-PLAN.md
 
 **Next Steps:**
-1. Phase 4 Plan 01 complete — AGENT-001, AGENT-002, LLM-003 satisfied
-2. Proceed to Phase 4 Plan 02 (next plan in phase 4)
+1. Phase 4 Plan 02 complete — AGENT-003, AGENT-004, LLM-003 satisfied
+2. Proceed to Phase 5 (next phase)
 
 **Context for Next Session:**
-- agents/nodes/gatekeeper.py: _GATEKEEPER_PROMPT, 4-category ChatGroq classification, follow-up rewrite, NL safety
-- agents/nodes/schema_linker.py: lazy get_retriever, resolved_query preference, full-schema fallback
-- graph/state.py: AgentState 14 fields including resolved_query
-- graph/conditions.py: route_after_gatekeeper handles sql/follow_up/conversational/ambiguous
-- tests/agents/: conftest.py (make_agent_state), 7 gatekeeper tests, 3 schema linker tests
-- Test suite: 83 passed, 0 failed, 0 xfailed
-- AGENT-001, AGENT-002, LLM-003 all satisfied
+- agents/nodes/query_planner.py: _PLANNER_PROMPT, 9-key JSON plan, _DEFAULT_PLAN fallback, fence-strip
+- agents/nodes/sql_generator.py: _GENERATOR_PROMPT, _DIALECT_REMINDERS, _validate_sql, SQL:/EXPLANATION: split
+- All 4 agent nodes complete: gatekeeper, schema_linker, query_planner, sql_generator
+- tests/agents/: conftest.py, 7 gatekeeper + 3 schema_linker + 5 query_planner + 7 sql_generator tests
+- Test suite: 95 passed, 0 failed, 0 xfailed
+- AGENT-001, AGENT-002, AGENT-003, AGENT-004, LLM-003 all satisfied
 
 ---
 

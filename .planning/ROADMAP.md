@@ -13,7 +13,7 @@
 | 1 | 3/3 | Complete   | 2026-03-09 |
 | 2 | 3/3 | Complete   | 2026-03-15 |
 | 3 | 2/2 | Complete   | 2026-03-15 |
-| 4 | 1/2 | In Progress|  |
+| 4 | 2/2 | Complete   | 2026-03-15 |
 | 5 | Execution & Safety Layer | Not Started | DB-002, DB-003, SAFETY-001 |
 | 6 | Error Correction Loop | Not Started | ERROR-001, ERROR-002, ERROR-003 |
 | 7 | LLM Integration & Fallback | Not Started | LLM-001, LLM-002, LLM-003 |
@@ -169,7 +169,7 @@ Plans:
 - ✓ Prompts optimized for each agent role
 - ✓ Test: "Show total sales by region" → valid PostgreSQL SELECT query
 
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 04-01-PLAN.md — AgentState expansion (resolved_query), routing update, gatekeeper node, schema linker node, test infrastructure (Wave 1)

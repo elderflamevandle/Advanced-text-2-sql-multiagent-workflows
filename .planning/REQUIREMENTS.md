@@ -597,8 +597,8 @@
 | GRAPH-003 | Phase 9 | Complete |
 | AGENT-001 | Phase 4 | Complete |
 | AGENT-002 | Phase 3 | Complete |
-| AGENT-003 | Phase 4 | Pending |
-| AGENT-004 | Phase 4 | Pending |
+| AGENT-003 | Phase 4 | Complete |
+| AGENT-004 | Phase 4 | Complete |
 | AGENT-005 | Phase 5 | Pending |
 | AGENT-006 | Phase 6 | Pending |
 | AGENT-007 | Phase 6 | Pending |
