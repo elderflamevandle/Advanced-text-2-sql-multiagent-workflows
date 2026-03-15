@@ -1,0 +1,7 @@
+# Pinecone serverless index configuration
+index_name: text2sql-schema
+dimension: 1024          # BAAI/bge-large-en-v1.5 output dimension
+metric: cosine
+cloud: aws
+region: us-east-1        # Free-tier default region
+top_k: 5                 # Number of tables to retrieve
