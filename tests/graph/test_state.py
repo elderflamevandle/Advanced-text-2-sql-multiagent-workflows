@@ -10,6 +10,7 @@ from tests.graph.conftest import make_initial_state
 EXPECTED_FIELDS = {
     "messages",
     "user_query",
+    "resolved_query",
     "db_type",
     "db_manager",
     "query_type",
@@ -25,7 +26,7 @@ EXPECTED_FIELDS = {
 
 
 def test_agentstate_has_required_fields():
-    """GRAPH-001: AgentState must have exactly 13 required fields."""
+    """GRAPH-001: AgentState must have exactly 14 required fields."""
     from graph.state import AgentState
 
     hints = get_type_hints(AgentState, include_extras=True)
@@ -33,7 +34,7 @@ def test_agentstate_has_required_fields():
         f"Field mismatch. Missing: {EXPECTED_FIELDS - set(hints.keys())}, "
         f"Extra: {set(hints.keys()) - EXPECTED_FIELDS}"
     )
-    assert len(hints) == 13
+    assert len(hints) == 14
 
 
 def test_messages_uses_add_messages_reducer():
@@ -83,6 +84,10 @@ def test_routing_gatekeeper():
     assert route_after_gatekeeper({"query_type": "sql"}) == "schema_linker"
     # Conversational → formatter (bypass SQL pipeline)
     assert route_after_gatekeeper({"query_type": "conversational"}) == "formatter"
+    # follow_up → schema_linker (needs schema lookup after rewrite)
+    assert route_after_gatekeeper({"query_type": "follow_up"}) == "schema_linker"
+    # ambiguous → formatter (needs clarification response)
+    assert route_after_gatekeeper({"query_type": "ambiguous"}) == "formatter"
 
 
 def test_routing_executor():

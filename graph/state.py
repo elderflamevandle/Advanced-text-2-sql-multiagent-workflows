@@ -5,6 +5,7 @@ from langgraph.graph.message import add_messages
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     user_query: str
+    resolved_query: Optional[str]
     db_type: str
     db_manager: Optional[object]
     query_type: Optional[str]

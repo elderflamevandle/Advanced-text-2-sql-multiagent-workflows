@@ -2,8 +2,8 @@ from graph.state import AgentState
 
 
 def route_after_gatekeeper(state: AgentState) -> str:
-    """Route to schema_linker for SQL queries, formatter for conversational."""
-    if state.get("query_type") == "conversational":
+    """Route to schema_linker for SQL/follow_up, formatter for conversational/ambiguous."""
+    if state.get("query_type") in ("conversational", "ambiguous"):
         return "formatter"
     return "schema_linker"
 
