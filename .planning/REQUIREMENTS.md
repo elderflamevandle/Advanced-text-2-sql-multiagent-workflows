@@ -595,8 +595,8 @@
 | GRAPH-001 | Phase 1 | Complete |
 | GRAPH-002 | Phase 2 | Complete |
 | GRAPH-003 | Phase 9 | Complete |
-| AGENT-001 | Phase 4 | Pending |
-| AGENT-002 | Phase 3 | Pending |
+| AGENT-001 | Phase 4 | Complete |
+| AGENT-002 | Phase 3 | Complete |
 | AGENT-003 | Phase 4 | Pending |
 | AGENT-004 | Phase 4 | Pending |
 | AGENT-005 | Phase 5 | Pending |
@@ -609,7 +609,7 @@
 | VECTOR-002 | Phase 3 | Complete |
 | LLM-001 | Phase 7 | Pending |
 | LLM-002 | Phase 7 | Pending |
-| LLM-003 | Phase 4 | Pending |
+| LLM-003 | Phase 4 | Complete |
 | UI-001 | Phase 8 | Pending |
 | UI-002 | Phase 8 | Pending |
 | UI-003 | Phase 8 | Pending |

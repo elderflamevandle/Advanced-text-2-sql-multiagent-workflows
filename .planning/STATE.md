@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 4
 status: unknown
-last_updated: "2026-03-15T03:05:15.110Z"
+last_updated: "2026-03-15T07:07:56.371Z"
 progress:
   total_phases: 12
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-  percent: 100
+  total_plans: 10
+  completed_plans: 9
+  percent: 90
 ---
 
 # Project State: Text-to-SQL Agentic Pipeline
@@ -23,15 +23,25 @@ progress:
 
 ## Current Status
 
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 90%
 
-**Active Work:** Phase 3 Plan 02 complete — BaseRetriever ABC, PineconeRetriever, ChromaRetriever, get_retriever factory; 14 retrieval tests all passing; 73 total tests green
+**Active Work:** Phase 4 Plan 01 complete — gatekeeper_node (4-category LLM classification, follow-up rewrite, NL safety), schema_linker_node (vector retrieval, full-schema fallback); 10 new tests; 83 total tests green
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-15: Phase 4 Plan 01 Complete (Gatekeeper and Schema Linker Agent Nodes)
+- graph/state.py: added resolved_query field (14 fields total)
+- graph/conditions.py: route_after_gatekeeper handles 4 categories (sql/follow_up->schema_linker, conversational/ambiguous->formatter)
+- agents/nodes/gatekeeper.py: _GATEKEEPER_PROMPT constant (LLM-003), 4-category ChatGroq classification, follow-up rewrite, destructive NL block, db_manager guard
+- agents/nodes/schema_linker.py: lazy get_retriever(), resolved_query preference, full-schema fallback
+- tests/agents/: __init__.py, conftest.py (make_agent_state), test_gatekeeper.py (7 tests), test_schema_linker.py (3 tests)
+- Auto-fix: sys.modules injection + importlib.reload() for mocking lazy-imported langchain_groq (same pattern as chromadb/pinecone in Phase 3)
+- Full test suite: 83 passed, 0 failed (73 prior + 10 new AGENT-001/AGENT-002/LLM-003)
+- AGENT-001, AGENT-002, LLM-003 requirements satisfied
 
 ### 2026-03-14: Phase 3 Plan 02 Complete (BaseRetriever with Pinecone and ChromaDB Backends)
 - vector/retriever.py: BaseRetriever ABC, PineconeRetriever (two-stage retrieval, serverless index), ChromaRetriever (PersistentClient, sanitized collection names), get_retriever() factory
@@ -117,6 +127,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 4 Plan 01 (2026-03-15)
+- sys.modules injection + importlib.reload() for gatekeeper tests — lazy-imported ChatGroq inside function body is never bound at module level; patch() fails; sys.modules injection forces re-import to pick up mock
+- Destructive NL safety check runs before LLM call — saves tokens and prevents any LLM-assisted workaround; patterns include delete/drop/truncate/remove all/destroy/erase
+- route_after_gatekeeper: follow_up → schema_linker — rewritten follow-up queries need schema lookup before SQL generation, same path as sql
+- resolved_query field added after user_query in AgentState — stores standalone rewrite for follow-up queries; never overwrites user_query for audit trail
+- schema_linker uses `resolved_query or user_query` — single `or` expression handles both None and empty string cleanly
+
 ### Phase 3 Plan 02 (2026-03-14)
 - Lazy import pinecone/chromadb inside __init__ — keeps optional extras from causing ImportError at package import time
 - schema_cache stored on instance during embed_schema — cleaner than passing schema to every retrieve_tables call
@@ -198,23 +215,22 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T03:00:52.636Z
+**Last Session:** 2026-03-15T07:07:56.364Z
 
-**Resume Point:** Completed 03-vector-schema-retrieval-pinecone 03-02-PLAN.md
+**Resume Point:** Completed 04-specialized-agent-nodes 04-01-PLAN.md
 
 **Next Steps:**
-1. Phase 3 complete — VECTOR-001, VECTOR-002, VECTOR-003 all satisfied
-2. Proceed to Phase 4: Schema Linker Node
+1. Phase 4 Plan 01 complete — AGENT-001, AGENT-002, LLM-003 satisfied
+2. Proceed to Phase 4 Plan 02 (next plan in phase 4)
 
 **Context for Next Session:**
-- vector/retriever.py: BaseRetriever ABC, PineconeRetriever (two-stage, FK expansion), ChromaRetriever (local fallback), get_retriever()
-- vector/embeddings.py: EmbeddingGenerator (lazy BGE, lru_cache, batched docs), build_table_text, build_column_text
-- vector/schema_graph.py: SchemaGraph (FK adjacency, expand_tables 1-hop, generate_join_hints)
-- config/pinecone_config.yaml: index_name text2sql-schema, dimension 1024, cosine, aws us-east-1
-- pyproject.toml: vector extras group with pinecone>=5.1.0, sentence-transformers>=5.0.0, chromadb>=0.5.0
-- tests/vector/: 32 tests passing (10 embeddings + 8 schema graph + 14 retrieval)
-- Test suite: 73 passed, 0 failed, 0 xfailed
-- VECTOR-001, VECTOR-002, VECTOR-003 all satisfied
+- agents/nodes/gatekeeper.py: _GATEKEEPER_PROMPT, 4-category ChatGroq classification, follow-up rewrite, NL safety
+- agents/nodes/schema_linker.py: lazy get_retriever, resolved_query preference, full-schema fallback
+- graph/state.py: AgentState 14 fields including resolved_query
+- graph/conditions.py: route_after_gatekeeper handles sql/follow_up/conversational/ambiguous
+- tests/agents/: conftest.py (make_agent_state), 7 gatekeeper tests, 3 schema linker tests
+- Test suite: 83 passed, 0 failed, 0 xfailed
+- AGENT-001, AGENT-002, LLM-003 all satisfied
 
 ---
 
