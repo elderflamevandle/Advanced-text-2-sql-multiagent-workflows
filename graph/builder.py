@@ -25,8 +25,8 @@ def build_graph():
     wf.add_node("sql_generator", sql_generator_node)
     wf.add_node("hitl", hitl_node)
     wf.add_node("executor", executor_node)
-    wf.add_node("correction_plan", correction_plan_node)
-    wf.add_node("correction_sql", correction_sql_node)
+    wf.add_node("correction_plan_node", correction_plan_node)
+    wf.add_node("correction_sql_node", correction_sql_node)
     wf.add_node("formatter", formatter_node)
     wf.add_node("evaluator", evaluator_node)
 
@@ -48,10 +48,10 @@ def build_graph():
     wf.add_conditional_edges(
         "executor",
         route_after_executor,
-        {"correction_plan": "correction_plan", "formatter": "formatter"},
+        {"correction_plan": "correction_plan_node", "formatter": "formatter"},
     )
-    wf.add_edge("correction_plan", "correction_sql")
-    wf.add_edge("correction_sql", "executor")  # correction loop back-edge
+    wf.add_edge("correction_plan_node", "correction_sql_node")
+    wf.add_edge("correction_sql_node", "executor")  # correction loop back-edge
     wf.add_edge("formatter", "evaluator")
     wf.add_edge("evaluator", END)
 

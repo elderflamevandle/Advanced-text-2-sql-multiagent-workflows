@@ -18,5 +18,7 @@ class AgentState(TypedDict):
     execution_metadata: Optional[dict]
     approval_status: Optional[str]
     error_log: Optional[str]
+    correction_plan: Optional[dict]   # structured diagnosis from correction_plan_node
+    sql_history: Optional[list]       # [{sql: str, error: dict, attempt_num: int}] audit trail
     retry_count: int
     final_answer: Optional[str]

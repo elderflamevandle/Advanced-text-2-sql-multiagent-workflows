@@ -23,13 +23,15 @@ EXPECTED_FIELDS = {
     "execution_metadata",
     "approval_status",
     "error_log",
+    "correction_plan",
+    "sql_history",
     "retry_count",
     "final_answer",
 }
 
 
 def test_agentstate_has_required_fields():
-    """GRAPH-001: AgentState must have exactly 17 required fields."""
+    """GRAPH-001: AgentState must have exactly 19 required fields."""
     from graph.state import AgentState
 
     hints = get_type_hints(AgentState, include_extras=True)
@@ -37,7 +39,7 @@ def test_agentstate_has_required_fields():
         f"Field mismatch. Missing: {EXPECTED_FIELDS - set(hints.keys())}, "
         f"Extra: {set(hints.keys()) - EXPECTED_FIELDS}"
     )
-    assert len(hints) == 17
+    assert len(hints) == 19
 
 
 def test_messages_uses_add_messages_reducer():

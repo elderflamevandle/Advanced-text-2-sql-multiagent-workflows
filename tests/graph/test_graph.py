@@ -29,7 +29,7 @@ def test_graph_traverses_end_to_end():
 def test_graph_draw_mermaid():
     """GRAPH-002: Graph is visualizable and includes all nodes (10 total with HITL)."""
     mermaid = compiled_graph.get_graph().draw_mermaid()
-    for node in ["gatekeeper", "evaluator", "correction_plan", "schema_linker", "hitl"]:
+    for node in ["gatekeeper", "evaluator", "correction_plan_node", "schema_linker", "hitl"]:
         assert node in mermaid, f"Node missing from Mermaid: {node}"
 
 
