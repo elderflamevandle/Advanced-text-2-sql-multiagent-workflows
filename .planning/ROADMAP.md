@@ -320,6 +320,12 @@ Plans:
 - `llm/usage_tracker.py` - token/cost tracking
 - `tests/llm/test_fallback.py` - fallback logic tests
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — AgentState usage_metadata field (19->20), test scaffold (16 stubs), usage_tracker/groq_client/openai_client factories, langchain-ollama dep (Wave 1)
+- [ ] 07-02-PLAN.md — FallbackClient + get_llm() factory, config.yaml llm block extension, 5 node 1-line updates, all 16 tests green (Wave 2)
+
 **Dependencies:** Phase 4 (agent nodes using LLMs)
 
 **Risks:**
