@@ -1,5 +1,266 @@
 {
   "version": "1.0",
   "description": "SQL error taxonomy for self-correction agent",
-  "categories": []
+  "categories": [
+    {
+      "id": "syntax_error",
+      "name": "Syntax Error",
+      "severity": "recoverable",
+      "strategy": "fix_syntax",
+      "prompt_hint": "The SQL has a syntax error. Identify the exact location and fix the syntax.",
+      "patterns": {
+        "postgres": ["syntax error at or near", "unterminated quoted string"],
+        "mysql": ["You have an error in your SQL syntax", "check the manual that corresponds"],
+        "sqlite": ["near .+: syntax error", "incomplete input"],
+        "duckdb": ["Parser Error", "syntax error at or near"]
+      }
+    },
+    {
+      "id": "missing_table",
+      "name": "Missing Table",
+      "severity": "recoverable",
+      "strategy": "fix_table_name",
+      "prompt_hint": "The SQL references a table that does not exist. Check the table name and correct it.",
+      "patterns": {
+        "postgres": ["relation \".+\" does not exist", "table \".+\" does not exist"],
+        "mysql": ["Table '.+' doesn't exist", "Unknown table '.+'"],
+        "sqlite": ["no such table: .+"],
+        "duckdb": ["Table with name .+ does not exist", "Catalog Error.*table"]
+      }
+    },
+    {
+      "id": "missing_column",
+      "name": "Missing Column",
+      "severity": "recoverable",
+      "strategy": "fix_column_name",
+      "prompt_hint": "The SQL references a column that does not exist. Check the column name and correct it.",
+      "patterns": {
+        "postgres": ["column \".+\" does not exist", "column .+ does not exist"],
+        "mysql": ["Unknown column '.+' in"],
+        "sqlite": ["no such column: .+", "table .+ has no column named .+"],
+        "duckdb": ["Referenced column .+ not found", "Binder Error.*column"]
+      }
+    },
+    {
+      "id": "ambiguous_column",
+      "name": "Ambiguous Column Reference",
+      "severity": "recoverable",
+      "strategy": "qualify_column",
+      "prompt_hint": "The column reference is ambiguous. Qualify the column with its table name.",
+      "patterns": {
+        "postgres": ["column reference .+ is ambiguous"],
+        "mysql": ["Column .+ in .+ is ambiguous"],
+        "sqlite": ["ambiguous column name: .+"],
+        "duckdb": ["Ambiguous reference to column .+"]
+      }
+    },
+    {
+      "id": "type_mismatch",
+      "name": "Type Mismatch",
+      "severity": "recoverable",
+      "strategy": "fix_type_cast",
+      "prompt_hint": "There is a type mismatch in the SQL. Add an appropriate CAST or fix the data type.",
+      "patterns": {
+        "postgres": ["operator does not exist", "cannot cast", "invalid input syntax for type"],
+        "mysql": ["Incorrect .+ value", "Data truncated for column"],
+        "sqlite": ["datatype mismatch"],
+        "duckdb": ["Type .+ cannot be cast", "Conversion Error"]
+      }
+    },
+    {
+      "id": "division_by_zero",
+      "name": "Division by Zero",
+      "severity": "recoverable",
+      "strategy": "add_null_guard",
+      "prompt_hint": "The SQL may divide by zero. Add a NULLIF or CASE guard to handle zero denominators.",
+      "patterns": {
+        "postgres": ["division by zero"],
+        "mysql": ["Division by 0"],
+        "sqlite": ["SQLITE_ERROR.*division by zero"],
+        "duckdb": ["Division by zero"]
+      }
+    },
+    {
+      "id": "join_condition_missing",
+      "name": "Missing Join Condition",
+      "severity": "recoverable",
+      "strategy": "add_join_condition",
+      "prompt_hint": "The SQL is missing a JOIN condition. Add the ON clause to relate the joined tables.",
+      "patterns": {
+        "postgres": ["missing FROM-clause entry for table"],
+        "mysql": ["Unknown table .+ in .+ clause"],
+        "sqlite": ["no tables specified"],
+        "duckdb": ["Referenced table .+ not found in FROM clause"]
+      }
+    },
+    {
+      "id": "aggregation_error",
+      "name": "Aggregation Error",
+      "severity": "recoverable",
+      "strategy": "fix_group_by",
+      "prompt_hint": "The SQL has an aggregation error. Ensure all non-aggregated columns are in the GROUP BY clause.",
+      "patterns": {
+        "postgres": ["must appear in the GROUP BY clause", "aggregate functions are not allowed"],
+        "mysql": ["'(.+)' isn't in GROUP BY", "mixing of GROUP columns.*nonaggregated columns"],
+        "sqlite": ["no such column.*GROUP BY", "misuse of aggregate"],
+        "duckdb": ["Binder Error.*GROUP BY", "must appear in the GROUP BY clause"]
+      }
+    },
+    {
+      "id": "subquery_returns_multiple_rows",
+      "name": "Subquery Returns Multiple Rows",
+      "severity": "recoverable",
+      "strategy": "add_limit_or_aggregate",
+      "prompt_hint": "The subquery returns more than one row where a scalar is expected. Add LIMIT 1 or use an aggregate function.",
+      "patterns": {
+        "postgres": ["more than one row returned by a subquery"],
+        "mysql": ["Subquery returns more than 1 row"],
+        "sqlite": ["sub-select returns .+ columns"],
+        "duckdb": ["More than one row returned by a subquery"]
+      }
+    },
+    {
+      "id": "invalid_date_format",
+      "name": "Invalid Date Format",
+      "severity": "recoverable",
+      "strategy": "fix_date_literal",
+      "prompt_hint": "The SQL contains an invalid date format. Use the correct date literal format (YYYY-MM-DD).",
+      "patterns": {
+        "postgres": ["invalid input syntax for type date", "date/time field value out of range"],
+        "mysql": ["Incorrect date value", "Incorrect datetime value"],
+        "sqlite": ["not a valid .+ value"],
+        "duckdb": ["date field value out of range", "Could not convert string .+ to DATE"]
+      }
+    },
+    {
+      "id": "null_comparison",
+      "name": "Null Comparison Error",
+      "severity": "recoverable",
+      "strategy": "fix_null_check",
+      "prompt_hint": "The SQL compares a value to NULL incorrectly. Use IS NULL or IS NOT NULL instead of = NULL.",
+      "patterns": {
+        "postgres": ["operator does not exist.*null"],
+        "mysql": ["Illegal use of NULL.*WHERE"],
+        "sqlite": ["null comparison"],
+        "duckdb": ["null comparison error"]
+      }
+    },
+    {
+      "id": "like_pattern_error",
+      "name": "LIKE Pattern Error",
+      "severity": "recoverable",
+      "strategy": "fix_like_pattern",
+      "prompt_hint": "The LIKE pattern is invalid. Check the pattern syntax and escape characters.",
+      "patterns": {
+        "postgres": ["invalid regular expression", "LIKE pattern must not end with escape character"],
+        "mysql": ["incorrect arguments to LIKE"],
+        "sqlite": ["unrecognized token.*LIKE"],
+        "duckdb": ["LIKE expression must be a string"]
+      }
+    },
+    {
+      "id": "column_alias_in_where",
+      "name": "Column Alias Used in WHERE",
+      "severity": "recoverable",
+      "strategy": "move_alias_to_subquery",
+      "prompt_hint": "A column alias cannot be used in the WHERE clause. Wrap the query in a subquery or repeat the expression.",
+      "patterns": {
+        "postgres": ["column .+ does not exist.*WHERE", "WHERE clause.*alias"],
+        "mysql": ["Unknown column .+ in 'where clause'"],
+        "sqlite": ["no such column.*where"],
+        "duckdb": ["Referenced column .+ not found.*WHERE"]
+      }
+    },
+    {
+      "id": "window_function_error",
+      "name": "Window Function Error",
+      "severity": "recoverable",
+      "strategy": "fix_window_function",
+      "prompt_hint": "The window function is used incorrectly. Ensure the OVER clause is present and properly formed.",
+      "patterns": {
+        "postgres": ["window function .+ requires an OVER clause", "aggregate function calls cannot be nested"],
+        "mysql": ["You have an error.*OVER"],
+        "sqlite": ["misuse of window function"],
+        "duckdb": ["Window function .+ requires OVER clause"]
+      }
+    },
+    {
+      "id": "cte_reference_error",
+      "name": "CTE Reference Error",
+      "severity": "recoverable",
+      "strategy": "fix_cte_reference",
+      "prompt_hint": "The CTE reference is invalid. Ensure the CTE is defined before it is referenced.",
+      "patterns": {
+        "postgres": ["WITH clause .+ does not exist", "recursive reference to query .+ is not allowed"],
+        "mysql": ["Table .+ doesn't exist.*WITH"],
+        "sqlite": ["no such table.*WITH"],
+        "duckdb": ["CTE .+ could not be found", "WITH clause.*not found"]
+      }
+    },
+    {
+      "id": "permission_denied",
+      "name": "Permission Denied",
+      "severity": "unrecoverable",
+      "strategy": "request_permission_fix",
+      "prompt_hint": "The database user does not have permission to execute this query. Contact the database administrator.",
+      "patterns": {
+        "postgres": ["permission denied for", "must be owner of"],
+        "mysql": ["Access denied for user", "command denied to user"],
+        "sqlite": ["attempt to write a readonly database"],
+        "duckdb": ["Permission denied"]
+      }
+    },
+    {
+      "id": "connection_error",
+      "name": "Connection Error",
+      "severity": "transient",
+      "strategy": "retry_unchanged",
+      "prompt_hint": "The database connection failed. The query will be retried automatically.",
+      "patterns": {
+        "postgres": ["could not connect to server", "connection refused", "connection timed out"],
+        "mysql": ["Can't connect to MySQL server", "Lost connection to MySQL server"],
+        "sqlite": ["unable to open database file"],
+        "duckdb": ["database connection failed", "IO Error"]
+      }
+    },
+    {
+      "id": "timeout",
+      "name": "Query Timeout",
+      "severity": "transient",
+      "strategy": "retry_unchanged",
+      "prompt_hint": "The query timed out. The query will be retried automatically.",
+      "patterns": {
+        "postgres": ["canceling statement due to statement timeout", "query canceled"],
+        "mysql": ["Query execution was interrupted", "Lock wait timeout exceeded"],
+        "sqlite": ["SQLITE_BUSY", "database is locked"],
+        "duckdb": ["Timeout Error", "query timeout"]
+      }
+    },
+    {
+      "id": "result_too_large",
+      "name": "Result Too Large",
+      "severity": "recoverable",
+      "strategy": "add_limit",
+      "prompt_hint": "The query result is too large. Add a LIMIT clause to reduce the result set size.",
+      "patterns": {
+        "postgres": ["canceling statement due to conflict", "result too large"],
+        "mysql": ["Result consisted of more than max_allowed_packet"],
+        "sqlite": ["SQLITE_TOOBIG"],
+        "duckdb": ["Result size exceeds limit", "out of memory"]
+      }
+    },
+    {
+      "id": "unknown",
+      "name": "Unknown Error",
+      "severity": "recoverable",
+      "strategy": "general_fix",
+      "prompt_hint": "The error type is unknown. Analyze the error message carefully and attempt a general fix.",
+      "patterns": {
+        "postgres": [],
+        "mysql": [],
+        "sqlite": [],
+        "duckdb": []
+      }
+    }
+  ]
 }
