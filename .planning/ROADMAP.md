@@ -15,7 +15,7 @@
 | 3 | 2/2 | Complete   | 2026-03-15 |
 | 4 | 2/2 | Complete   | 2026-03-15 |
 | 5 | 2/2 | Complete   | 2026-03-15 |
-| 6 | Error Correction Loop | Not Started | ERROR-001, ERROR-002, ERROR-003 |
+| 6 | Error Correction Loop | Planned (2/2) | ERROR-001, ERROR-002, ERROR-003 |
 | 7 | LLM Integration & Fallback | Not Started | LLM-001, LLM-002, LLM-003 |
 | 8 | Streamlit Frontend | Not Started | UI-001, UI-002, UI-003, UI-004 |
 | 9 | Memory & History | Not Started | MEMORY-001, MEMORY-002, SESSION-001 |
@@ -277,6 +277,12 @@ Plans:
 - `agents/correction_sql.py` - correction agent
 - `utils/error_parser.py` - PostgreSQL/MySQL error parsers
 - `tests/agents/test_correction.py` - correction loop tests
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Error taxonomy (20 categories), utils/error_parser.py, AgentState extension (19 fields), test scaffold (Wave 1)
+- [ ] 06-02-PLAN.md — correction_plan_node, correction_sql_node, formatter graceful degradation, all tests passing (Wave 2)
 
 **Dependencies:** Phase 5 (execution failures to correct)
 
