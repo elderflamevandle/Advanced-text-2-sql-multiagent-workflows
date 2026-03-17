@@ -156,7 +156,6 @@ def test_transient_error_no_llm_call():
     mock_llm_instance.ainvoke.assert_not_called()
 
 
-@pytest.mark.skip(reason="Wave 2: correction_sql_node not yet implemented")
 def test_retry_count_increments():
     """ERROR-002: correction_sql_node increments retry_count by 1."""
     cs_mod = _inject_correction_sql_mock(_make_llm_mock("SQL: SELECT 1"))
@@ -168,7 +167,6 @@ def test_retry_count_increments():
     assert result.get("retry_count") == 1
 
 
-@pytest.mark.skip(reason="Wave 2: correction_sql_node not yet implemented")
 def test_error_log_cleared_after_correction():
     """ERROR-002: correction_sql_node returns error_log: None after rewrite."""
     cs_mod = _inject_correction_sql_mock(_make_llm_mock("SQL: SELECT 1"))
@@ -179,7 +177,6 @@ def test_error_log_cleared_after_correction():
     assert result.get("error_log") is None
 
 
-@pytest.mark.skip(reason="Wave 2: correction_sql_node not yet implemented")
 def test_sql_history_accumulates():
     """ERROR-002: correction_sql_node appends the previous SQL+error to sql_history."""
     cs_mod = _inject_correction_sql_mock(_make_llm_mock("SQL: SELECT 1"))
@@ -202,7 +199,6 @@ def test_sql_history_accumulates():
 # ERROR-003: SQL rewrite and integration tests (Wave 2 stubs — skipped)
 # ===========================================================================
 
-@pytest.mark.skip(reason="Wave 2: correction_sql_node not yet implemented")
 def test_sql_rewrite_uses_plan():
     """ERROR-003: correction_sql_node calls LLM and returns corrected generated_sql."""
     corrected = "SELECT * FROM Invoice"
@@ -215,7 +211,6 @@ def test_sql_rewrite_uses_plan():
     assert result["generated_sql"] == corrected
 
 
-@pytest.mark.skip(reason="Wave 2: integration test requires both nodes implemented")
 def test_wrong_table_self_corrects():
     """ERROR-003: Full correction loop (plan + rewrite) produces valid SQL for table typo."""
     state = make_agent_state()
