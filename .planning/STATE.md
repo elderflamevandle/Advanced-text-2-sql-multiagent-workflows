@@ -4,6 +4,21 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 6
 status: unknown
+last_updated: "2026-03-17T01:06:14.503Z"
+progress:
+  total_phases: 12
+  completed_phases: 6
+  total_plans: 14
+  completed_plans: 14
+  percent: 100
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 6
+status: unknown
 last_updated: "2026-03-17T00:57:11.224Z"
 progress:
   total_phases: 12
@@ -30,23 +45,32 @@ progress:
 
 # Project State: Text-to-SQL Agentic Pipeline
 
-**Last Updated:** 2026-03-15
+**Last Updated:** 2026-03-16
 **Milestone:** v1.0 - Production-Ready Multi-Agent Text-to-SQL System
-**Current Phase:** 6
+**Current Phase:** 7
 
 ---
 
 ## Current Status
 
-**Progress:** [█████████░] 93%
+**Progress:** [██████████] 100%
 
-**Active Work:** Phase 6 Plan 01 complete — 20-category error taxonomy (config/error-taxonomy.json), error_parser module (classify_error, get_fuzzy_matches), AgentState extended 17->19 fields (correction_plan, sql_history), correction test scaffold (5 pass + 7 Wave 2 stubs); 168 total tests green.
+**Active Work:** Phase 6 complete — correction_plan_node (taxonomy + LLM diagnosis), correction_sql_node (targeted SQL rewrite), and formatter_node (graceful degradation) all implemented. All 12 test_correction.py tests pass (0 skipped); full suite 175 passed, 0 failed. ERROR-001, ERROR-002, ERROR-003 all satisfied.
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-16: Phase 6 Plan 02 Complete (Correction Loop Node Implementations — Wave 2)
+- agents/nodes/correction_plan.py: full implementation — _CORRECTION_PLAN_PROMPT, classify_error() taxonomy classification, transient early-return (no LLM), fuzzy suggestions from relevant_tables + columns, LLM diagnosis with JSON parse + fallback, taxonomy metadata merge
+- agents/nodes/correction_sql.py: full implementation — _CORRECTION_SQL_PROMPT, transient passthrough path (steps==["retry_unchanged"]), LLM SQL rewrite, SQL:/EXPLANATION: output split, always returns error_log: None, list() copy for sql_history
+- agents/nodes/formatter.py: three-path logic — PATH A success (db_results), PATH B graceful degradation (error_log/sql_history audit trail), PATH C conversational/rejection
+- tests/agents/test_correction.py: all 7 Wave 2 stubs unskipped; 12 tests now active, 0 skipped
+- Auto-fix: taxonomy metadata merge ensures error_category always present in correction_plan dict (Rule 1)
+- Full suite: 175 passed, 0 skipped, 0 failed (168 prior + 7 newly-active tests)
+- ERROR-002, ERROR-003 requirements satisfied; Phase 6 complete (all 3 requirements satisfied)
 
 ### 2026-03-17: Phase 6 Plan 01 Complete (Error Taxonomy Foundation and Test Scaffold)
 - config/error-taxonomy.json: 20 categories populated (syntax_error through unknown), each with id/name/severity/strategy/prompt_hint/patterns (postgres/mysql/sqlite/duckdb)
@@ -185,6 +209,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 6 Plan 02 (2026-03-16)
+- correction_plan_node merges taxonomy metadata into LLM JSON response — ensures error_category, severity, strategy, prompt_hint always present even when LLM omits them; critical for test assertions and downstream node correctness
+- correction_sql_node always returns error_log: None — CRITICAL invariant; prevents routing loop in route_after_executor (error_log presence triggers retry path)
+- Transient early-return checks category severity before any LLM lazy import — avoids LLM latency for connection_error and timeout categories; saves tokens for errors where SQL rewrite is not the fix
+- formatter_node PATH B triggers on error_log is not None OR sql_history non-empty — handles both states: route reached mid-correction (error_log present) and post-exhaustion (error_log may be None but sql_history captured attempts)
+- Fuzzy suggestions built only for name-related error categories (missing_table, missing_column, ambiguous_column) — avoids irrelevant suggestions for syntax/permission/type errors
+
 ### Phase 6 Plan 01 (2026-03-17)
 - Renamed graph nodes correction_plan->correction_plan_node and correction_sql->correction_sql_node — LangGraph raises ValueError when a node name matches a TypedDict state field name; routing function return string "correction_plan" unchanged (maps to renamed node via path dict in add_conditional_edges)
 - _load_taxonomy() reads JSON fresh each call (no lru_cache) — follows safety.py pattern; allows test patching without importlib.reload
@@ -297,15 +328,19 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-17T00:57:11.217Z
+**Last Session:** 2026-03-17T01:06:14.496Z
 
-**Resume Point:** Completed 06-error-correction-loop 06-01-PLAN.md
+**Resume Point:** Completed 06-error-correction-loop 06-02-PLAN.md
 
 **Next Steps:**
-1. Phase 6 Plan 01 complete — ERROR-001, ERROR-002 requirements satisfied (Wave 1 foundation)
-2. Proceed to Phase 6 Plan 02 (correction_plan_node and correction_sql_node full implementations — Wave 2)
+1. Phase 6 complete — ERROR-001, ERROR-002, ERROR-003 all satisfied; correction loop fully functional end-to-end
+2. Proceed to Phase 7 (LLM Integration and Fallback — LLM-001, LLM-002, LLM-003)
 
 **Context for Next Session:**
+- agents/nodes/correction_plan.py: correction_plan_node with classify_error() + LLM diagnosis; transient early-return; fuzzy suggestions
+- agents/nodes/correction_sql.py: correction_sql_node with LLM SQL rewrite; always error_log: None; sql_history accumulation
+- agents/nodes/formatter.py: three-path formatter — success, graceful degradation, conversational
+- Full suite: 175 passed, 0 failed, 0 skipped
 - config/error-taxonomy.json: 20 error categories with dialect regex patterns
 - utils/error_parser.py: _load_taxonomy(), classify_error(), get_fuzzy_matches()
 - graph/state.py: 19 fields — correction_plan (Optional[dict]) and sql_history (Optional[list]) added
