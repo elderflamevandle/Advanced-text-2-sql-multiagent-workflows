@@ -64,11 +64,11 @@ async def gatekeeper_node(state: AgentState) -> dict:
             "query_type": "conversational",
         }
 
-    # 3. Lazy import ChatGroq
-    from langchain_groq import ChatGroq
+    # 3. Lazy import get_llm (FallbackClient factory)
+    from llm.fallback import get_llm
     from langchain_core.messages import SystemMessage, HumanMessage
 
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=1024)
+    llm = get_llm(node="gatekeeper", state=state)
 
     # 4. Build messages for classification
     chat_history = state.get("messages", [])

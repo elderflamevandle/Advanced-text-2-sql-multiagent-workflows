@@ -80,7 +80,7 @@ def _format_schema_context(schema: dict) -> str:
 async def query_planner_node(state: AgentState) -> dict:
     """Generate a Chain-of-Thought JSON query plan from the resolved query and schema."""
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_groq import ChatGroq  # lazy import — optional dep
+    from llm.fallback import get_llm
 
     query = state.get("resolved_query") or state.get("user_query", "")
     schema = state.get("schema") or {}
@@ -92,7 +92,7 @@ async def query_planner_node(state: AgentState) -> dict:
         relevant_tables=relevant_tables,
     )
 
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=1024)
+    llm = get_llm(node="query_planner", state=state)
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=query),

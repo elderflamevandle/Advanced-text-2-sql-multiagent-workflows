@@ -82,7 +82,7 @@ def _format_schema_context(schema: dict) -> str:
 async def sql_generator_node(state: AgentState) -> dict:
     """Translate the structured query plan into dialect-specific SQL with explanation."""
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_groq import ChatGroq  # lazy import — optional dep
+    from llm.fallback import get_llm
 
     query = state.get("resolved_query") or state.get("user_query", "")
     query_plan = state.get("query_plan") or {}
@@ -100,7 +100,7 @@ async def sql_generator_node(state: AgentState) -> dict:
         dialect_reminder=dialect_reminder,
     )
 
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=2048)
+    llm = get_llm(node="sql_generator", state=state)
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=query),

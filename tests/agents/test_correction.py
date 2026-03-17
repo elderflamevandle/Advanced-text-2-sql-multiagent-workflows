@@ -1,14 +1,10 @@
 """Tests for Phase 6 error correction loop — ERROR-001, ERROR-002, ERROR-003.
 
 Wave 1: 5 taxonomy/utility tests are fully implemented and pass.
-Wave 2: 7 node behavior stubs are skipped until correction_plan_node and
-        correction_sql_node are implemented.
+Wave 2: 7 node behavior tests are fully implemented and pass.
 """
 import asyncio
-import importlib
-import sys
-import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,40 +12,21 @@ from tests.agents.conftest import make_agent_state
 
 
 # ---------------------------------------------------------------------------
-# Mock helpers (for Wave 2 node tests)
+# Mock helpers
 # ---------------------------------------------------------------------------
 
 def _make_llm_mock(content: str) -> MagicMock:
-    """Return a fully configured ChatGroq mock whose ainvoke returns content."""
+    """Return a mock llm whose ainvoke returns content."""
     mock_response = MagicMock()
     mock_response.content = content
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
-    mock_llm_class = MagicMock(return_value=mock_llm_instance)
-    return mock_llm_class
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    return mock_llm
 
 
-def _inject_chatgroq_mock(mock_class: MagicMock):
-    """Inject mock into sys.modules so lazy import inside function picks it up."""
-    fake_module = types.ModuleType("langchain_groq")
-    fake_module.ChatGroq = mock_class
-    sys.modules["langchain_groq"] = fake_module
-
-
-def _inject_correction_plan_mock(mock_class: MagicMock):
-    """Reload correction_plan module with ChatGroq mock injected."""
-    _inject_chatgroq_mock(mock_class)
-    import agents.nodes.correction_plan as cp_mod
-    importlib.reload(cp_mod)
-    return cp_mod
-
-
-def _inject_correction_sql_mock(mock_class: MagicMock):
-    """Reload correction_sql module with ChatGroq mock injected."""
-    _inject_chatgroq_mock(mock_class)
-    import agents.nodes.correction_sql as cs_mod
-    importlib.reload(cs_mod)
-    return cs_mod
+def _patch_get_llm(mock_llm):
+    """Patch llm.fallback.get_llm to return mock_llm."""
+    return patch("llm.fallback.get_llm", return_value=mock_llm)
 
 
 # ===========================================================================
@@ -128,15 +105,20 @@ def test_fuzzy_match_table_name():
 
 
 # ===========================================================================
-# ERROR-002: correction_plan_node behavior tests (Wave 2 stubs — skipped)
+# ERROR-002: correction_plan_node behavior tests (Wave 2)
 # ===========================================================================
 
 def test_correction_plan_returns_structured_plan():
     """ERROR-002: correction_plan_node returns a dict with required keys."""
-    cp_mod = _inject_correction_plan_mock(_make_llm_mock('{"strategy": "fix_syntax"}'))
+    import agents.nodes.correction_plan as cp_mod
+
+    mock_llm = _make_llm_mock('{"strategy": "fix_syntax"}')
     state = make_agent_state()
     state["error_log"] = {"message": "syntax error at or near 'FROM'", "dialect": "sqlite"}
-    result = asyncio.run(cp_mod.correction_plan_node(state))
+
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(cp_mod.correction_plan_node(state))
+
     assert "correction_plan" in result
     plan = result["correction_plan"]
     assert isinstance(plan, dict)
@@ -147,45 +129,63 @@ def test_correction_plan_returns_structured_plan():
 
 def test_transient_error_no_llm_call():
     """ERROR-002: correction_plan_node skips LLM call for transient errors."""
-    mock_class = _make_llm_mock("{}")
-    cp_mod = _inject_correction_plan_mock(mock_class)
+    import agents.nodes.correction_plan as cp_mod
+
+    mock_llm = _make_llm_mock("{}")
     state = make_agent_state()
     state["error_log"] = {"message": "connection refused", "dialect": "postgres"}
-    asyncio.run(cp_mod.correction_plan_node(state))
-    mock_llm_instance = mock_class.return_value
-    mock_llm_instance.ainvoke.assert_not_called()
+
+    with _patch_get_llm(mock_llm):
+        asyncio.run(cp_mod.correction_plan_node(state))
+
+    mock_llm.ainvoke.assert_not_called()
 
 
 def test_retry_count_increments():
     """ERROR-002: correction_sql_node increments retry_count by 1."""
-    cs_mod = _inject_correction_sql_mock(_make_llm_mock("SQL: SELECT 1"))
+    import agents.nodes.correction_sql as cs_mod
+
+    mock_llm = _make_llm_mock("SQL: SELECT 1")
     state = make_agent_state()
     state["retry_count"] = 0
     state["correction_plan"] = {"strategy": "fix_syntax", "prompt_hint": "Fix syntax"}
     state["generated_sql"] = "SELCT 1"
-    result = asyncio.run(cs_mod.correction_sql_node(state))
+
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(cs_mod.correction_sql_node(state))
+
     assert result.get("retry_count") == 1
 
 
 def test_error_log_cleared_after_correction():
     """ERROR-002: correction_sql_node returns error_log: None after rewrite."""
-    cs_mod = _inject_correction_sql_mock(_make_llm_mock("SQL: SELECT 1"))
+    import agents.nodes.correction_sql as cs_mod
+
+    mock_llm = _make_llm_mock("SQL: SELECT 1")
     state = make_agent_state()
     state["error_log"] = {"message": "syntax error", "dialect": "sqlite"}
     state["correction_plan"] = {"strategy": "fix_syntax", "prompt_hint": "Fix syntax"}
-    result = asyncio.run(cs_mod.correction_sql_node(state))
+
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(cs_mod.correction_sql_node(state))
+
     assert result.get("error_log") is None
 
 
 def test_sql_history_accumulates():
     """ERROR-002: correction_sql_node appends the previous SQL+error to sql_history."""
-    cs_mod = _inject_correction_sql_mock(_make_llm_mock("SQL: SELECT 1"))
+    import agents.nodes.correction_sql as cs_mod
+
+    mock_llm = _make_llm_mock("SQL: SELECT 1")
     state = make_agent_state()
     state["generated_sql"] = "SELCT 1"
     state["error_log"] = {"message": "syntax error", "dialect": "sqlite"}
     state["correction_plan"] = {"strategy": "fix_syntax", "prompt_hint": "Fix syntax"}
     state["sql_history"] = None
-    result = asyncio.run(cs_mod.correction_sql_node(state))
+
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(cs_mod.correction_sql_node(state))
+
     history = result.get("sql_history")
     assert isinstance(history, list), f"Expected list, got {type(history)}"
     assert len(history) == 1
@@ -196,36 +196,46 @@ def test_sql_history_accumulates():
 
 
 # ===========================================================================
-# ERROR-003: SQL rewrite and integration tests (Wave 2 stubs — skipped)
+# ERROR-003: SQL rewrite and integration tests (Wave 2)
 # ===========================================================================
 
 def test_sql_rewrite_uses_plan():
     """ERROR-003: correction_sql_node calls LLM and returns corrected generated_sql."""
+    import agents.nodes.correction_sql as cs_mod
+
     corrected = "SELECT * FROM Invoice"
-    cs_mod = _inject_correction_sql_mock(_make_llm_mock(f"SQL: {corrected}"))
+    mock_llm = _make_llm_mock(f"SQL: {corrected}")
     state = make_agent_state()
     state["generated_sql"] = "SELCT * FORM Invoice"
     state["correction_plan"] = {"strategy": "fix_syntax", "prompt_hint": "Fix syntax"}
-    result = asyncio.run(cs_mod.correction_sql_node(state))
+
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(cs_mod.correction_sql_node(state))
+
     assert "generated_sql" in result
     assert result["generated_sql"] == corrected
 
 
 def test_wrong_table_self_corrects():
     """ERROR-003: Full correction loop (plan + rewrite) produces valid SQL for table typo."""
+    import agents.nodes.correction_plan as cp_mod
+    import agents.nodes.correction_sql as cs_mod
+
     state = make_agent_state()
     state["generated_sql"] = "SELECT * FROM Invoce"
     state["error_log"] = {"message": "no such table: Invoce", "dialect": "sqlite"}
     state["retry_count"] = 0
 
     # Step 1: correction_plan_node classifies and builds plan
-    cp_mod = _inject_correction_plan_mock(_make_llm_mock("{}"))
-    plan_result = asyncio.run(cp_mod.correction_plan_node(state))
+    mock_llm_plan = _make_llm_mock("{}")
+    with _patch_get_llm(mock_llm_plan):
+        plan_result = asyncio.run(cp_mod.correction_plan_node(state))
     assert plan_result.get("correction_plan") is not None
 
     # Step 2: correction_sql_node uses the plan to rewrite
     state.update(plan_result)
     corrected_sql = "SELECT * FROM Invoice"
-    cs_mod = _inject_correction_sql_mock(_make_llm_mock(f"SQL: {corrected_sql}"))
-    sql_result = asyncio.run(cs_mod.correction_sql_node(state))
+    mock_llm_sql = _make_llm_mock(f"SQL: {corrected_sql}")
+    with _patch_get_llm(mock_llm_sql):
+        sql_result = asyncio.run(cs_mod.correction_sql_node(state))
     assert sql_result.get("generated_sql") == corrected_sql

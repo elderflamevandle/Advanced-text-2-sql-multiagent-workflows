@@ -152,9 +152,9 @@ async def correction_plan_node(state: AgentState) -> dict:
 
     # --- LLM call (lazy imports) ---
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_groq import ChatGroq  # lazy import — optional dep
+    from llm.fallback import get_llm
 
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=1024)
+    llm = get_llm(node="correction_plan", state=state)
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=f"Diagnose this SQL error: {error_message}"),

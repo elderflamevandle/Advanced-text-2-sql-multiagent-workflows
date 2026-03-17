@@ -90,7 +90,7 @@ async def correction_sql_node(state: AgentState) -> dict:
 
     # --- NORMAL LLM REWRITE PATH ---
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_groq import ChatGroq  # lazy import — optional dep
+    from llm.fallback import get_llm
 
     db_type = state.get("db_type", "sqlite") or "sqlite"
     schema = state.get("schema") or {}
@@ -105,7 +105,7 @@ async def correction_sql_node(state: AgentState) -> dict:
     )
 
     user_query = state.get("user_query", "") or ""
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=2048)
+    llm = get_llm(node="correction_sql", state=state)
     messages = [
         SystemMessage(content=system_content),
         HumanMessage(content=f"Fix the SQL for: {user_query}"),
