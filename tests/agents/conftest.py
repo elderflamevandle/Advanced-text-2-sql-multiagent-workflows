@@ -1,5 +1,5 @@
 def make_agent_state(user_query: str = "test query", db_manager: object = None) -> dict:
-    """Return a complete AgentState dict with all 19 fields. Use a fresh copy per test."""
+    """Return a complete AgentState dict with all 20 fields. Use a fresh copy per test."""
     if db_manager is None:
         db_manager = object()  # non-None = connected
     return {
@@ -19,6 +19,7 @@ def make_agent_state(user_query: str = "test query", db_manager: object = None) 
         "error_log": None,
         "correction_plan": None,
         "sql_history": None,
+        "usage_metadata": None,
         "retry_count": 0,
         "final_answer": None,
     }
