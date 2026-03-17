@@ -2,6 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+current_phase: 7
+status: unknown
+last_updated: "2026-03-17T02:38:41.084Z"
+progress:
+  total_phases: 12
+  completed_phases: 6
+  total_plans: 16
+  completed_plans: 15
+  percent: 94
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
 current_phase: 6
 status: unknown
 last_updated: "2026-03-17T01:06:14.503Z"
@@ -53,15 +68,27 @@ progress:
 
 ## Current Status
 
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 94%
 
-**Active Work:** Phase 6 complete — correction_plan_node (taxonomy + LLM diagnosis), correction_sql_node (targeted SQL rewrite), and formatter_node (graceful degradation) all implemented. All 12 test_correction.py tests pass (0 skipped); full suite 175 passed, 0 failed. ERROR-001, ERROR-002, ERROR-003 all satisfied.
+**Active Work:** Phase 7 Plan 01 complete — AgentState expanded to 20 fields (usage_metadata added), usage_tracker.py with COST_TABLE/calculate_cost/UsageTracker, lazy-import leaf client factories _make_groq_llm/_make_openai_llm, and 16-test scaffold (3 active cost tests, 13 Wave 2 stubs). Full suite: 178 passed, 13 skipped, 0 failed. LLM-001, LLM-003 satisfied. Proceeding to Plan 02 (FallbackClient implementation).
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-16: Phase 7 Plan 01 Complete (LLM Integration Foundation — Wave 1)
+- graph/state.py: usage_metadata: Optional[list] added as 20th field (between sql_history and retry_count)
+- llm/usage_tracker.py: COST_TABLE dict with pricing for llama-3.3-70b-versatile/gpt-4o-mini/gpt-4o/qwen3:8b, calculate_cost(), UsageTracker in-memory accumulator
+- llm/groq_client.py: _make_groq_llm(cfg) factory with lazy ChatGroq import
+- llm/openai_client.py: _make_openai_llm(cfg, complexity) factory with lazy ChatOpenAI import
+- llm/__init__.py: re-exports COST_TABLE, calculate_cost, UsageTracker
+- pyproject.toml: langchain-groq, langchain-openai, langchain-ollama>=1.0.1 added to core deps
+- tests/agents/conftest.py, tests/graph/test_state.py: updated for 20-field AgentState
+- tests/llm/test_fallback.py: 16 tests created (3 active cost tests pass, 13 Wave 2 stubs skipped)
+- Full suite: 178 passed, 13 skipped, 0 failed (175 prior + 3 new active cost tests)
+- LLM-001, LLM-003 requirements satisfied
 
 ### 2026-03-16: Phase 6 Plan 02 Complete (Correction Loop Node Implementations — Wave 2)
 - agents/nodes/correction_plan.py: full implementation — _CORRECTION_PLAN_PROMPT, classify_error() taxonomy classification, transient early-return (no LLM), fuzzy suggestions from relevant_tables + columns, LLM diagnosis with JSON parse + fallback, taxonomy metadata merge
@@ -209,6 +236,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 7 Plan 01 (2026-03-16)
+- langchain-groq, langchain-openai, langchain-ollama>=1.0.1 added to core deps (not extras) — FallbackClient is core functionality, not optional; ollama dedicated package avoids langchain-community bundle bloat
+- ChatGroq and ChatOpenAI imports are lazy (inside factory function bodies) — follows established sys.modules injection pattern for test mocking
+- usage_metadata field placed between sql_history and retry_count — logical grouping: sql_history (correction audit), usage_metadata (LLM cost audit), retry_count (control flow)
+- COST_TABLE uses (input_per_1k, output_per_1k) tuple structure — consistent with Groq and OpenAI per-1k-token billing model; extensible to new models by adding entries
+- Wave 2 test stubs use pytest.skip — keeps suite green (13 skipped, not 13 failed) while establishing contracts for FallbackClient implementor
+
 ### Phase 6 Plan 02 (2026-03-16)
 - correction_plan_node merges taxonomy metadata into LLM JSON response — ensures error_category, severity, strategy, prompt_hint always present even when LLM omits them; critical for test assertions and downstream node correctness
 - correction_sql_node always returns error_log: None — CRITICAL invariant; prevents routing loop in route_after_executor (error_log presence triggers retry path)
@@ -328,26 +362,23 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-17T01:06:14.496Z
+**Last Session:** 2026-03-17T02:38:41.068Z
 
-**Resume Point:** Completed 06-error-correction-loop 06-02-PLAN.md
+**Resume Point:** Completed 07-llm-integration-fallback 07-01-PLAN.md
 
 **Next Steps:**
-1. Phase 6 complete — ERROR-001, ERROR-002, ERROR-003 all satisfied; correction loop fully functional end-to-end
-2. Proceed to Phase 7 (LLM Integration and Fallback — LLM-001, LLM-002, LLM-003)
+1. Phase 7 Plan 01 complete — Wave 1 foundation (AgentState, usage_tracker, leaf clients, test scaffold)
+2. Proceed to Phase 7 Plan 02 (FallbackClient implementation — Wave 2, unskip 13 stubs, implement LLM-002)
 
 **Context for Next Session:**
-- agents/nodes/correction_plan.py: correction_plan_node with classify_error() + LLM diagnosis; transient early-return; fuzzy suggestions
-- agents/nodes/correction_sql.py: correction_sql_node with LLM SQL rewrite; always error_log: None; sql_history accumulation
-- agents/nodes/formatter.py: three-path formatter — success, graceful degradation, conversational
-- Full suite: 175 passed, 0 failed, 0 skipped
-- config/error-taxonomy.json: 20 error categories with dialect regex patterns
-- utils/error_parser.py: _load_taxonomy(), classify_error(), get_fuzzy_matches()
-- graph/state.py: 19 fields — correction_plan (Optional[dict]) and sql_history (Optional[list]) added
-- graph/builder.py: nodes renamed to correction_plan_node and correction_sql_node (avoid LangGraph collision)
-- tests/agents/test_correction.py: 5 passing + 7 Wave 2 stubs (pytest.mark.skip)
-- Test suite: 168 passed, 7 skipped, 0 failed
-- ERROR-001, ERROR-002 satisfied; Phase 6 Plan 01 (Wave 1 foundation) complete
+- graph/state.py: 20 fields — usage_metadata: Optional[list] added as 20th field
+- llm/usage_tracker.py: COST_TABLE, calculate_cost(), UsageTracker — all imported cleanly
+- llm/groq_client.py: _make_groq_llm(cfg) factory with lazy ChatGroq import
+- llm/openai_client.py: _make_openai_llm(cfg, complexity) factory with lazy ChatOpenAI import
+- tests/llm/test_fallback.py: 16 tests (3 active cost tests, 13 Wave 2 stubs) — ready for unskip in Plan 02
+- pyproject.toml: langchain-groq, langchain-openai, langchain-ollama>=1.0.1 in core deps
+- Full suite: 178 passed, 13 skipped, 0 failed
+- LLM-001, LLM-003 satisfied; LLM-002 (FallbackClient) is Plan 02 target
 
 ---
 
