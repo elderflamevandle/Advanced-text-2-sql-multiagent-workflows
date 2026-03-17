@@ -4,6 +4,21 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 7
 status: unknown
+last_updated: "2026-03-17T02:50:18.943Z"
+progress:
+  total_phases: 12
+  completed_phases: 7
+  total_plans: 16
+  completed_plans: 16
+  percent: 100
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 7
+status: unknown
 last_updated: "2026-03-17T02:38:41.084Z"
 progress:
   total_phases: 12
@@ -60,7 +75,7 @@ progress:
 
 # Project State: Text-to-SQL Agentic Pipeline
 
-**Last Updated:** 2026-03-16
+**Last Updated:** 2026-03-17
 **Milestone:** v1.0 - Production-Ready Multi-Agent Text-to-SQL System
 **Current Phase:** 7
 
@@ -68,15 +83,27 @@ progress:
 
 ## Current Status
 
-**Progress:** [█████████░] 94%
+**Progress:** [██████████] 100%
 
-**Active Work:** Phase 7 Plan 01 complete — AgentState expanded to 20 fields (usage_metadata added), usage_tracker.py with COST_TABLE/calculate_cost/UsageTracker, lazy-import leaf client factories _make_groq_llm/_make_openai_llm, and 16-test scaffold (3 active cost tests, 13 Wave 2 stubs). Full suite: 178 passed, 13 skipped, 0 failed. LLM-001, LLM-003 satisfied. Proceeding to Plan 02 (FallbackClient implementation).
+**Active Work:** Phase 7 Plan 02 complete — FallbackClient (Groq->OpenAI->Ollama chain) implemented in llm/fallback.py, get_llm() factory wired into all 5 agent nodes, 13 Wave 2 test stubs unskipped. Full suite: 191 passed, 0 skipped, 0 failed. LLM-001, LLM-002, LLM-003 all satisfied. Phase 7 complete.
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-17: Phase 7 Plan 02 Complete (FallbackClient Implementation — Wave 2)
+- llm/fallback.py: FallbackClient class (Groq->OpenAI->Ollama chain, ainvoke/astream), get_llm() factory with fresh YAML config read
+- config/config.yaml: extended llm block with 5 new keys (groq_model, openai_model_default/complex, ollama_model, ollama_base_url)
+- llm/__init__.py: re-exports FallbackClient and get_llm
+- All 5 agent nodes: ChatGroq replaced by get_llm(node="...", state=state) inside function bodies
+- tests/llm/test_fallback.py: 13 Wave 2 stubs unskipped; test_cost_unknown_model_is_zero unskipped; 16 tests now active
+- tests/agents/test_gatekeeper.py, test_query_planner.py, test_sql_generator.py, test_correction.py: migrated to patch('llm.fallback.get_llm') mock pattern
+- Auto-fix: langchain-ollama missing from environment (in pyproject.toml deps but not installed) — pip installed v1.0.1 (Rule 3)
+- Auto-fix: existing node tests used sys.modules langchain_groq injection that no longer worked after node wiring — migrated to get_llm patch (Rule 1)
+- Full suite: 191 passed, 0 skipped, 0 failed (178 prior + 13 newly-active stubs)
+- LLM-001, LLM-002, LLM-003 all satisfied; Phase 7 complete
 
 ### 2026-03-16: Phase 7 Plan 01 Complete (LLM Integration Foundation — Wave 1)
 - graph/state.py: usage_metadata: Optional[list] added as 20th field (between sql_history and retry_count)
@@ -236,6 +263,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 7 Plan 02 (2026-03-17)
+- FallbackClient constructed with three LLM instances (not classes) — allows direct injection in tests and clean provider chain without special factory mocking
+- Existing node tests migrated from sys.modules injection to patch('llm.fallback.get_llm') — simpler, no importlib.reload() needed; works because get_llm is a module-level name
+- astream() wraps ainvoke() for Phase 7 — full token-level streaming deferred to Phase 8 where chunked usage_metadata aggregation will be added
+- _groq_exc() and _openai_exc() are functions not tuples — lazy import on each call avoids import-time side effects and preserves test isolation
+- langchain-ollama installed directly (was in pyproject.toml core deps but missing from environment); version 1.0.1 installed
+
 ### Phase 7 Plan 01 (2026-03-16)
 - langchain-groq, langchain-openai, langchain-ollama>=1.0.1 added to core deps (not extras) — FallbackClient is core functionality, not optional; ollama dedicated package avoids langchain-community bundle bloat
 - ChatGroq and ChatOpenAI imports are lazy (inside factory function bodies) — follows established sys.modules injection pattern for test mocking
@@ -362,23 +396,21 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-17T02:38:41.068Z
+**Last Session:** 2026-03-17T02:49:13Z
 
-**Resume Point:** Completed 07-llm-integration-fallback 07-01-PLAN.md
+**Resume Point:** Completed 07-llm-integration-fallback 07-02-PLAN.md
 
 **Next Steps:**
-1. Phase 7 Plan 01 complete — Wave 1 foundation (AgentState, usage_tracker, leaf clients, test scaffold)
-2. Proceed to Phase 7 Plan 02 (FallbackClient implementation — Wave 2, unskip 13 stubs, implement LLM-002)
+1. Phase 7 complete — LLM integration fallback chain fully implemented (LLM-001, LLM-002, LLM-003)
+2. Proceed to Phase 8 (Streamlit Frontend and Interactive Debugging Panel)
 
 **Context for Next Session:**
-- graph/state.py: 20 fields — usage_metadata: Optional[list] added as 20th field
-- llm/usage_tracker.py: COST_TABLE, calculate_cost(), UsageTracker — all imported cleanly
-- llm/groq_client.py: _make_groq_llm(cfg) factory with lazy ChatGroq import
-- llm/openai_client.py: _make_openai_llm(cfg, complexity) factory with lazy ChatOpenAI import
-- tests/llm/test_fallback.py: 16 tests (3 active cost tests, 13 Wave 2 stubs) — ready for unskip in Plan 02
-- pyproject.toml: langchain-groq, langchain-openai, langchain-ollama>=1.0.1 in core deps
-- Full suite: 178 passed, 13 skipped, 0 failed
-- LLM-001, LLM-003 satisfied; LLM-002 (FallbackClient) is Plan 02 target
+- llm/fallback.py: FallbackClient + get_llm() factory — all 5 agent nodes use get_llm()
+- config/config.yaml: 8 llm keys (groq_model, openai_model_default/complex, ollama_model, ollama_base_url, primary/fallback_provider, request_timeout)
+- langchain-ollama==1.0.1 installed in environment
+- All node tests use patch('llm.fallback.get_llm') mock pattern (no more sys.modules langchain_groq injection)
+- Full suite: 191 passed, 0 skipped, 0 failed
+- Phase 7 requirements LLM-001, LLM-002, LLM-003 all satisfied
 
 ---
 
