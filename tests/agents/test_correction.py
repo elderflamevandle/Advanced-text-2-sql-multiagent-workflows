@@ -131,7 +131,6 @@ def test_fuzzy_match_table_name():
 # ERROR-002: correction_plan_node behavior tests (Wave 2 stubs — skipped)
 # ===========================================================================
 
-@pytest.mark.skip(reason="Wave 2: correction_plan_node not yet implemented")
 def test_correction_plan_returns_structured_plan():
     """ERROR-002: correction_plan_node returns a dict with required keys."""
     cp_mod = _inject_correction_plan_mock(_make_llm_mock('{"strategy": "fix_syntax"}'))
@@ -146,7 +145,6 @@ def test_correction_plan_returns_structured_plan():
     assert not missing, f"correction_plan missing keys: {missing}"
 
 
-@pytest.mark.skip(reason="Wave 2: correction_plan_node not yet implemented")
 def test_transient_error_no_llm_call():
     """ERROR-002: correction_plan_node skips LLM call for transient errors."""
     mock_class = _make_llm_mock("{}")
