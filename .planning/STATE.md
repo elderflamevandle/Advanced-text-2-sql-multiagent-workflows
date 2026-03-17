@@ -4,6 +4,21 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 6
 status: unknown
+last_updated: "2026-03-17T00:57:11.224Z"
+progress:
+  total_phases: 12
+  completed_phases: 5
+  total_plans: 14
+  completed_plans: 13
+  percent: 93
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 6
+status: unknown
 last_updated: "2026-03-15T09:21:51.759Z"
 progress:
   total_phases: 12
@@ -23,15 +38,28 @@ progress:
 
 ## Current Status
 
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 93%
 
-**Active Work:** Phase 5 Plan 02 complete — HITL approval gate node (hitl_node with LangGraph interrupt, _is_simple_query, resumption handling), graph rewired sql_generator->hitl->executor/formatter, route_after_hitl; 23 new tests; 157 total tests green. Phase 5 (execution safety layer) complete.
+**Active Work:** Phase 6 Plan 01 complete — 20-category error taxonomy (config/error-taxonomy.json), error_parser module (classify_error, get_fuzzy_matches), AgentState extended 17->19 fields (correction_plan, sql_history), correction test scaffold (5 pass + 7 Wave 2 stubs); 168 total tests green.
 
 **Blockers:** None
 
 ---
 
 ## Recent Activity
+
+### 2026-03-17: Phase 6 Plan 01 Complete (Error Taxonomy Foundation and Test Scaffold)
+- config/error-taxonomy.json: 20 categories populated (syntax_error through unknown), each with id/name/severity/strategy/prompt_hint/patterns (postgres/mysql/sqlite/duckdb)
+- utils/error_parser.py: _load_taxonomy() (no-cache, fresh read), classify_error() (regex->high, fallback->low), get_fuzzy_matches() (difflib wrapper)
+- graph/state.py: correction_plan (Optional[dict]) and sql_history (Optional[list]) added; 17->19 fields
+- graph/builder.py: renamed nodes correction_plan->correction_plan_node, correction_sql->correction_sql_node to fix LangGraph state key collision
+- tests/agents/conftest.py: make_agent_state() updated to 19 fields; relevant_tables set to Chinook list
+- tests/graph/test_state.py: EXPECTED_FIELDS updated (17->19), assertion updated
+- tests/graph/conftest.py: make_initial_state() updated with correction_plan/sql_history
+- tests/agents/test_correction.py: 12 tests (5 passing Wave 1 taxonomy tests, 7 skipped Wave 2 node stubs)
+- Auto-fix: renamed graph nodes to resolve LangGraph ValueError (state key collision) — Rule 1
+- Full suite: 168 passed, 7 skipped, 0 failed (157 prior + 11 new tests)
+- ERROR-001, ERROR-002 requirements marked complete
 
 ### 2026-03-15: Phase 5 Plan 02 Complete (HITL Approval Gate Node)
 - agents/nodes/hitl.py: hitl_node with LangGraph interrupt() for complex queries (JOIN/subquery/UNION/CTE), auto-approve for simple SELECTs, resumption handling (approved/rejected/edited)
@@ -157,6 +185,11 @@ progress:
 
 ## Key Decisions
 
+### Phase 6 Plan 01 (2026-03-17)
+- Renamed graph nodes correction_plan->correction_plan_node and correction_sql->correction_sql_node — LangGraph raises ValueError when a node name matches a TypedDict state field name; routing function return string "correction_plan" unchanged (maps to renamed node via path dict in add_conditional_edges)
+- _load_taxonomy() reads JSON fresh each call (no lru_cache) — follows safety.py pattern; allows test patching without importlib.reload
+- Wave 2 test stubs use pytest.mark.skip — keeps suite green (7 skipped, not 7 failed) while satisfying Nyquist rule (stubs exist for Wave 2 implementor)
+
 ### Phase 5 Plan 02 (2026-03-15)
 - interrupt() called via lazy import inside hitl_node — avoids import-time side effects; allows sys.modules mock injection in tests before module load
 - _is_simple_query uses word-boundary regex for JOIN/UNION and SELECT count for subqueries — no AST needed for safety heuristic
@@ -264,21 +297,22 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-15T09:14:26Z
+**Last Session:** 2026-03-17T00:57:11.217Z
 
-**Resume Point:** Completed 05-execution-safety-layer 05-02-PLAN.md
+**Resume Point:** Completed 06-error-correction-loop 06-01-PLAN.md
 
 **Next Steps:**
-1. Phase 5 complete — DB-002, DB-003, SAFETY-001, AGENT-005, AGENT-010 all satisfied
-2. Proceed to Phase 6 (correction loop: correction_plan_node, correction_sql_node full implementations)
+1. Phase 6 Plan 01 complete — ERROR-001, ERROR-002 requirements satisfied (Wave 1 foundation)
+2. Proceed to Phase 6 Plan 02 (correction_plan_node and correction_sql_node full implementations — Wave 2)
 
 **Context for Next Session:**
-- agents/nodes/hitl.py: hitl_node (LangGraph interrupt, auto-approve, resumption), _is_simple_query()
-- graph/conditions.py: route_after_hitl, route_after_gatekeeper, route_after_executor
-- graph/builder.py: 10-node graph, sql_generator -> hitl -> conditional(executor|formatter)
-- agents/nodes/__init__.py: 10 node exports including hitl_node
-- Test suite: 157 passed, 0 failed, 0 xfailed
-- AGENT-010 satisfied; Phase 5 (execution safety layer) fully complete
+- config/error-taxonomy.json: 20 error categories with dialect regex patterns
+- utils/error_parser.py: _load_taxonomy(), classify_error(), get_fuzzy_matches()
+- graph/state.py: 19 fields — correction_plan (Optional[dict]) and sql_history (Optional[list]) added
+- graph/builder.py: nodes renamed to correction_plan_node and correction_sql_node (avoid LangGraph collision)
+- tests/agents/test_correction.py: 5 passing + 7 Wave 2 stubs (pytest.mark.skip)
+- Test suite: 168 passed, 7 skipped, 0 failed
+- ERROR-001, ERROR-002 satisfied; Phase 6 Plan 01 (Wave 1 foundation) complete
 
 ---
 

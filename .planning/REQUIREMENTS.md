@@ -615,8 +615,8 @@
 | UI-003 | Phase 8 | Pending |
 | UI-004 | Phase 8 | Pending |
 | UI-005 | Phase 9 | Pending |
-| ERROR-001 | Phase 6 | Pending |
-| ERROR-002 | Phase 6 | Pending |
+| ERROR-001 | Phase 6 | Complete |
+| ERROR-002 | Phase 6 | Complete |
 | TEST-001 | Phase 10 | Pending |
 | TEST-002 | Phase 10 | Pending |
 | TEST-003 | Phase 1 | Pending |
