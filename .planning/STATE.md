@@ -4,6 +4,21 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 8 (executing plans)
 status: unknown
+last_updated: "2026-03-18T03:38:36.639Z"
+progress:
+  total_phases: 12
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 19
+  percent: 90
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 8 (executing plans)
+status: unknown
 last_updated: "2026-03-18T03:34:21.720Z"
 progress:
   total_phases: 12
@@ -128,9 +143,9 @@ progress:
 
 ## Current Status
 
-**Progress:** [█████████░] 86%
+**Progress:** [█████████░] 90%
 
-**Active Work:** Phase 8 Plan 03 complete — streamlit_app/components/chat.py with token-by-token streaming via FallbackClient.astream() + st.write_stream(), HITL approval card, per-node stage labels. Full suite: 205 passed, 16 skipped, 0 failed.
+**Active Work:** Phase 8 Plan 02 complete — streamlit_app/app.py (get_graph cache_resource, init_session 14 keys, reset_session, main() with sidebar+chat), streamlit_app/components/sidebar.py (4-section groups: DB connection, API keys, LLM settings, session controls), .streamlit/config.toml, streamlit_app/styles/custom.css. Full suite: 210 passed, 11 skipped, 0 failed.
 
 **Blockers:** None
 
@@ -143,6 +158,16 @@ progress:
 ---
 
 ## Recent Activity
+
+### 2026-03-18: Phase 8 Plan 02 Complete (App Entry Point and Configuration Sidebar — Wave 1)
+- streamlit_app/app.py: get_graph() with @st.cache_resource, init_session() (14 session keys: messages, thread_id, db_manager, session_tokens, session_cost, hitl_enabled, hitl_pending, hitl_config, hitl_decision, hitl_initial_sql, last_state, groq_api_key, openai_api_key, pinecone_api_key), reset_session() (clears all + reinits), main()
+- .streamlit/config.toml: light theme (primaryColor #1f77b4), headless server
+- streamlit_app/components/sidebar.py: full render_sidebar() with 4 sections (DB connection, API keys, LLM settings, session controls); _do_connect() wired to DatabaseManager.get_schema() with inline status
+- streamlit_app/styles/custom.css: minimal sidebar nav + cost ticker overrides
+- tests/ui/test_app.py: 4 new TDD tests using AttrDict mock for session_state (import OK, cache_resource decoration, init_session keys, reset_session clears)
+- tests/ui/test_sidebar.py: 5 skipped Wave 1 stubs replaced with real tests
+- Full suite: 210 passed, 11 skipped, 0 failed (was 205/16/0 after Plan 03)
+- UI-001 requirement satisfied
 
 ### 2026-03-18: Phase 8 Plan 03 Complete (Chat Interface — Wave 1)
 - streamlit_app/components/chat.py: render_chat(), submit_query(), render_hitl_card(), _build_initial_state(), _handle_graph_interrupt(), _update_session_cost(), _stream_final_answer(), _sync_aiter()
@@ -340,6 +365,12 @@ progress:
 
 ## Key Decisions
 
+### Phase 8 Plan 02 (2026-03-18)
+- AttrDict (dict subclass with __getattr__/__setattr__) used as st.session_state mock — enables both key-in and attribute-access patterns needed by app.py and sidebar.py in tests without a running Streamlit server
+- st.columns(N) mock requires side_effect=lambda n: [MagicMock()]*n — MagicMock default return value is not iterable for tuple unpacking in `col1, col2 = st.columns(2)`
+- _do_connect() uses dict-style st.session_state["key"] = val — functionally identical to attribute assignment in real Streamlit; works with plain dict mocks in test_connect_button_triggers_db_manager
+- app.py calls main() at module level (no __name__ guard) — Streamlit re-runs entire script on each interaction; tests intercept via patch.dict(sys.modules, {"streamlit": mock}) before importlib.import_module
+
 ### Phase 8 Plan 03 (2026-03-18)
 - get_llm(node='chat_stream') used in _stream_final_answer — FallbackClient constructor requires groq_llm/openai_llm/ollama_llm/tracker; get_llm() is the proper factory
 - Command import is lazy (inside _process_hitl_decision body) — test_hitl.py injects a mock sys.modules['langgraph.types'] lacking Command; module-level import caused all 6 tests to fail in full suite run
@@ -485,20 +516,22 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-18T03:34:21.710Z
+**Last Session:** 2026-03-18T03:36:24Z
 
-**Resume Point:** Completed 08-streamlit-frontend 08-03-PLAN.md
+**Resume Point:** Completed 08-streamlit-frontend 08-02-PLAN.md
 
 **Next Steps:**
-1. Phase 8 Plan 03 complete — chat.py with streaming, HITL card, stage labels done
-2. Proceed to Phase 8 Plan 04 (debug panel + charts components)
+1. Phase 8 Plan 02 complete — app.py entry point and sidebar.py with 4 section groups done
+2. Phase 8 Plan 03 also complete — chat.py with streaming, HITL card, stage labels done
+3. Proceed to Phase 8 Plan 04 (debug panel + charts components)
 
 **Context for Next Session:**
+- streamlit_app/app.py: get_graph(), init_session() (14 keys), reset_session(), main()
+- streamlit_app/components/sidebar.py: render_sidebar() 4 sections, _do_connect() wired to DatabaseManager
 - streamlit_app/components/chat.py: full chat interface with token streaming, HITL approval, _sync_aiter adapter
-- streamlit_app/app.py: get_graph(), init_session(), reset_session() available (from Plan 02)
-- tests/ui/test_chat.py: 6 passing tests (was 5 skipped)
-- Full suite: 205 passed, 16 skipped, 0 failed
-- UI-002 satisfied; 16 skipped stubs remain for Wave 2 (debug panel, charts, e2e)
+- tests/ui/test_sidebar.py: 5 passing tests (was 5 skipped); test_app.py: 4 new passing tests
+- Full suite: 210 passed, 11 skipped, 0 failed
+- UI-001 satisfied (Plan 02); UI-002 satisfied (Plan 03); 11 skipped stubs remain for Wave 2 (debug panel, charts, e2e)
 
 ---
 

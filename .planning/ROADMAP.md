@@ -17,7 +17,7 @@
 | 5 | 2/2 | Complete   | 2026-03-15 |
 | 6 | 2/2 | Complete   | 2026-03-17 |
 | 7 | 2/2 | Complete   | 2026-03-17 |
-| 8 | 2/5 | In Progress|  |
+| 8 | 3/5 | In Progress|  |
 | 9 | Memory & History | Not Started | MEMORY-001, MEMORY-002, SESSION-001 |
 | 10 | Testing & Quality | Not Started | TEST-001, TEST-002, TEST-003 |
 | 11 | Evaluation (Ragas) | Not Started | EVAL-001, EVAL-002 |
@@ -367,7 +367,7 @@ Plans:
 - `streamlit_app/components/charts.py` - visualization logic
 - `streamlit_app/styles/` - custom CSS
 
-**Plans:** 2/5 plans executed
+**Plans:** 3/5 plans executed
 
 Plans:
 - [ ] 08-01-PLAN.md — FallbackClient.astream() upgrade + plotly dep + Wave 0 test scaffold (Wave 1)
