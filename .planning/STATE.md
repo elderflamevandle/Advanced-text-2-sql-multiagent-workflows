@@ -2,6 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+current_phase: 8 (ready to plan)
+status: unknown
+last_updated: "2026-03-18T03:21:56.754Z"
+progress:
+  total_phases: 12
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 17
+  percent: 81
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
 current_phase: 8
 status: unknown
 last_updated: "2026-03-17T03:06:32.962Z"
@@ -90,17 +105,17 @@ progress:
 
 # Project State: Text-to-SQL Agentic Pipeline
 
-**Last Updated:** 2026-03-17
+**Last Updated:** 2026-03-18
 **Milestone:** v1.0 - Production-Ready Multi-Agent Text-to-SQL System
-**Current Phase:** 8
+**Current Phase:** 8 (executing plans)
 
 ---
 
 ## Current Status
 
-**Progress:** [██████████] 100%
+**Progress:** [████████░░] 81%
 
-**Active Work:** Phase 7 Plan 02 complete — FallbackClient (Groq->OpenAI->Ollama chain) implemented in llm/fallback.py, get_llm() factory wired into all 5 agent nodes, 13 Wave 2 test stubs unskipped. Full suite: 191 passed, 0 skipped, 0 failed. LLM-001, LLM-002, LLM-003 all satisfied. Phase 7 complete.
+**Active Work:** Phase 8 Plan 01 complete — FallbackClient.astream() upgraded to token-level streaming (str chunks via llm.astream()), plotly 6.6.0 installed, tests/ui/ Wave 0 scaffold (7 files, 21 skipped stubs) created. Full suite: 195 passed, 21 skipped, 0 failed. UI-001, UI-002, UI-003, UI-004 requirements satisfied.
 
 **Blockers:** None
 
@@ -108,11 +123,25 @@ progress:
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 1 | Smoke-test codebase after Phase 07 and fix any blocking issues found | 2026-03-17 | — | [1-smoke-test-codebase-after-phase-07-and-f](./quick/1-smoke-test-codebase-after-phase-07-and-f/) |
+| 1 | Smoke-test codebase after Phase 07 and fix any blocking issues found | 2026-03-17 | a99af74 | [1-smoke-test-codebase-after-phase-07-and-f](./quick/1-smoke-test-codebase-after-phase-07-and-f/) |
 
 ---
 
 ## Recent Activity
+
+### 2026-03-18: Phase 8 Plan 01 Complete (Streamlit Frontend Wave 0 Test Scaffold)
+- llm/fallback.py: FallbackClient.astream() rewritten to iterate llm.astream() for true token-level streaming; provider fallback loop preserved; usage recorded from final chunk's usage_metadata; all-fail yields str(error_dict) not raw dict
+- pyproject.toml: plotly>=5.0.0,<7.0.0 added to core dependencies (plotly 6.6.0 installed)
+- tests/llm/test_fallback.py: 4 new astream behavior tests (TDD RED/GREEN flow)
+- tests/ui/__init__.py: empty package marker
+- tests/ui/conftest.py: sample_agent_state (20 AgentState fields), sample_agent_state_with_error, mock_graph, mock_db_manager fixtures
+- tests/ui/test_sidebar.py: 5 UI-001 stubs (skipped — Wave 1)
+- tests/ui/test_chat.py: 5 UI-002 stubs (skipped — Wave 1)
+- tests/ui/test_debug_panel.py: 5 UI-003 stubs (skipped — Wave 2)
+- tests/ui/test_charts.py: 4 UI-004 stubs (skipped — Wave 2)
+- tests/ui/test_e2e.py: 2 end-to-end smoke stubs (skipped — Wave 3)
+- Full suite: 195 passed, 21 skipped, 0 failed (191 prior + 4 new active astream tests)
+- UI-001, UI-002, UI-003, UI-004 requirements satisfied
 
 ### 2026-03-17: Phase 7 Plan 02 Complete (FallbackClient Implementation — Wave 2)
 - llm/fallback.py: FallbackClient class (Groq->OpenAI->Ollama chain, ainvoke/astream), get_llm() factory with fresh YAML config read
@@ -284,6 +313,12 @@ progress:
 
 ## Key Decisions
 
+### Phase 8 Plan 01 (2026-03-18)
+- FallbackClient.astream() iterates llm.astream() for token-level streaming — not ainvoke() wrapping; yields str chunks for st.write_stream() compatibility; usage_metadata aggregated from final chunk; all-providers-fail yields str(error_dict) (never raw dict)
+- plotly placed in core dependencies (not optional extras) — charts are core Streamlit UI functionality, not optional capability
+- astream() tests added to tests/llm/test_fallback.py (not a new file) — plan explicitly prohibited creating new llm test files
+- Wave 0 stubs use pytest.mark.skip with reference to implementing PLAN in reason string — keeps suite green; 21 skipped is acceptable; provides Nyquist-compliant scaffold for Wave 1/2/3 implementors
+
 ### Phase 7 Plan 02 (2026-03-17)
 - FallbackClient constructed with three LLM instances (not classes) — allows direct injection in tests and clean provider chain without special factory mocking
 - Existing node tests migrated from sys.modules injection to patch('llm.fallback.get_llm') — simpler, no importlib.reload() needed; works because get_llm is a module-level name
@@ -417,21 +452,20 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-17T03:06:32.943Z
+**Last Session:** 2026-03-18T03:20:41Z
 
-**Resume Point:** Completed 07-llm-integration-fallback 07-02-PLAN.md
+**Resume Point:** Completed 08-streamlit-frontend 08-01-PLAN.md
 
 **Next Steps:**
-1. Phase 7 complete — LLM integration fallback chain fully implemented (LLM-001, LLM-002, LLM-003)
-2. Proceed to Phase 8 (Streamlit Frontend and Interactive Debugging Panel)
+1. Phase 8 Plan 01 complete — Wave 0 test scaffold and astream upgrade done
+2. Proceed to Phase 8 Plan 02 (sidebar component) or Phase 8 Plan 03 (chat component)
 
 **Context for Next Session:**
-- llm/fallback.py: FallbackClient + get_llm() factory — all 5 agent nodes use get_llm()
-- config/config.yaml: 8 llm keys (groq_model, openai_model_default/complex, ollama_model, ollama_base_url, primary/fallback_provider, request_timeout)
-- langchain-ollama==1.0.1 installed in environment
-- All node tests use patch('llm.fallback.get_llm') mock pattern (no more sys.modules langchain_groq injection)
-- Full suite: 191 passed, 0 skipped, 0 failed
-- Phase 7 requirements LLM-001, LLM-002, LLM-003 all satisfied
+- llm/fallback.py: FallbackClient.astream() upgraded — yields str chunks from llm.astream(); usage from final chunk
+- plotly 6.6.0 installed; pyproject.toml has plotly>=5.0.0,<7.0.0 in core deps
+- tests/ui/ scaffold: 7 files, 21 skipped stubs; conftest.py has sample_agent_state (20 fields), mock_graph, mock_db_manager
+- Full suite: 195 passed, 21 skipped, 0 failed
+- UI-001, UI-002, UI-003, UI-004 requirements satisfied (scaffold stubs in place)
 
 ---
 
