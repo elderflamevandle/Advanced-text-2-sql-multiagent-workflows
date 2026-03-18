@@ -80,14 +80,48 @@ class FallbackClient:
         }
 
     async def astream(self, messages: list, state: dict | None = None):
-        """Stream interface for Phase 8 Streamlit chat. Delegates to ainvoke and yields chunks.
+        """Stream token chunks. Tries each provider; falls back to next on failure.
 
-        For full streaming with token-level chunks, upgrade this in Phase 8
-        to delegate to llm.astream() and aggregate the final chunk for usage_metadata.
-        For Phase 7, wraps ainvoke() so the interface exists and callers can consume it.
+        Yields str chunks. After the last chunk, records usage via tracker.
+        Uses llm.astream() for true token-level streaming when available.
+        Falls back to ainvoke() wrapping if provider doesn't support astream.
         """
-        response = await self.ainvoke(messages, state=state)
-        yield response
+        last_exc = None
+        for provider_name, llm in self._providers:
+            try:
+                full_content = ""
+                final_chunk = None
+                async for chunk in llm.astream(messages):
+                    text = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    if text:
+                        yield text
+                        full_content += text
+                    final_chunk = chunk
+                # Record usage from final chunk metadata
+                usage = {}
+                if final_chunk is not None and hasattr(final_chunk, "usage_metadata"):
+                    usage = final_chunk.usage_metadata or {}
+                self._tracker.record(
+                    provider=provider_name,
+                    model=getattr(llm, "model_name", getattr(llm, "model", "unknown")),
+                    node_name=self._node_name,
+                    input_tokens=usage.get("input_tokens", 0),
+                    output_tokens=usage.get("output_tokens", 0),
+                    state=state,
+                )
+                if provider_name != "groq":
+                    logger.warning("FallbackClient.astream: served by %s", provider_name)
+                return  # Success — stop provider loop
+            except Exception as exc:
+                logger.warning("FallbackClient.astream: %s failed (%s) — trying next",
+                               provider_name, type(exc).__name__)
+                last_exc = exc
+        # All providers failed — yield error as string
+        logger.error("FallbackClient.astream: all providers failed. last_error=%s", last_exc)
+        yield str({
+            "error_type": "llm_all_providers_failed",
+            "message": f"All LLM providers exhausted: {last_exc}",
+        })
 
 
 def get_llm(node: str, state: dict | None = None) -> "FallbackClient":

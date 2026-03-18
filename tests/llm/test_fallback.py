@@ -356,3 +356,126 @@ def test_cost_unknown_model_is_zero():
     """Unknown model returns $0.00 cost (safe default)."""
     from llm.usage_tracker import calculate_cost
     assert calculate_cost("unknown-model-xyz", 1000, 1000) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: astream() token-level streaming behavior
+# ---------------------------------------------------------------------------
+
+def test_astream_yields_string_chunks():
+    """astream() yields at least one string chunk (not an AIMessage object) on LLM success."""
+    async def _run():
+        mock_groq = MagicMock()
+        mock_groq.model_name = "llama-3.3-70b-versatile"
+
+        # Simulate llm.astream() yielding two chunks
+        async def _fake_astream(messages):
+            chunk1 = MagicMock()
+            chunk1.content = "Hello"
+            chunk1.usage_metadata = None
+            chunk2 = MagicMock()
+            chunk2.content = " world"
+            chunk2.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
+            yield chunk1
+            yield chunk2
+
+        mock_groq.astream = _fake_astream
+        mock_openai = MagicMock()
+        mock_ollama = MagicMock()
+        client, _ = _make_client(mock_groq, mock_openai, mock_ollama)
+
+        chunks = []
+        async for chunk in client.astream([{"role": "user", "content": "test"}]):
+            chunks.append(chunk)
+
+        assert len(chunks) >= 1, "astream() must yield at least one chunk"
+        for c in chunks:
+            assert isinstance(c, str), f"Expected str chunk, got {type(c).__name__}: {c!r}"
+
+    asyncio.run(_run())
+
+
+def test_astream_full_content_equals_concatenated_chunks():
+    """astream() yields chunks whose concatenation equals the full response text."""
+    async def _run():
+        mock_groq = MagicMock()
+        mock_groq.model_name = "llama-3.3-70b-versatile"
+
+        async def _fake_astream(messages):
+            for word in ["SELECT", " ", "1"]:
+                chunk = MagicMock()
+                chunk.content = word
+                chunk.usage_metadata = None
+                yield chunk
+
+        mock_groq.astream = _fake_astream
+        mock_openai = MagicMock()
+        mock_ollama = MagicMock()
+        client, _ = _make_client(mock_groq, mock_openai, mock_ollama)
+
+        chunks = []
+        async for chunk in client.astream(["test"]):
+            chunks.append(chunk)
+
+        full = "".join(chunks)
+        assert full == "SELECT 1", f"Expected 'SELECT 1', got {full!r}"
+
+    asyncio.run(_run())
+
+
+def test_astream_records_usage_after_streaming():
+    """astream() records usage_metadata via tracker.record() after streaming completes."""
+    async def _run():
+        mock_groq = MagicMock()
+        mock_groq.model_name = "llama-3.3-70b-versatile"
+
+        async def _fake_astream(messages):
+            chunk1 = MagicMock()
+            chunk1.content = "result"
+            chunk1.usage_metadata = None
+            yield chunk1
+            chunk2 = MagicMock()
+            chunk2.content = ""
+            chunk2.usage_metadata = {"input_tokens": 50, "output_tokens": 20}
+            yield chunk2
+
+        mock_groq.astream = _fake_astream
+        mock_openai = MagicMock()
+        mock_ollama = MagicMock()
+        client, tracker = _make_client(mock_groq, mock_openai, mock_ollama)
+
+        async for _ in client.astream(["test"]):
+            pass  # consume all chunks
+
+        assert len(tracker.entries) == 1, "tracker.record() must be called once after streaming"
+        entry = tracker.entries[0]
+        assert entry["provider"] == "groq"
+        assert entry["input_tokens"] == 50
+        assert entry["output_tokens"] == 20
+
+    asyncio.run(_run())
+
+
+def test_astream_error_dict_yields_string_not_dict():
+    """All providers fail -> astream() yields a string error message, not a raw dict."""
+    async def _run():
+        mock_groq = MagicMock()
+        mock_groq.model_name = "llama-3.3-70b-versatile"
+        mock_groq.astream = MagicMock(side_effect=Exception("groq astream down"))
+        mock_openai = MagicMock()
+        mock_openai.model_name = "gpt-4o-mini"
+        mock_openai.astream = MagicMock(side_effect=Exception("openai astream down"))
+        mock_ollama = MagicMock()
+        mock_ollama.model = "qwen3:8b"
+        mock_ollama.astream = MagicMock(side_effect=Exception("ollama astream down"))
+        client, _ = _make_client(mock_groq, mock_openai, mock_ollama)
+
+        chunks = []
+        async for chunk in client.astream(["test"]):
+            chunks.append(chunk)
+
+        assert len(chunks) == 1, "Exactly one error chunk expected"
+        assert isinstance(chunks[0], str), f"Error must be str, got {type(chunks[0]).__name__}"
+        assert "llm_all_providers_failed" in chunks[0], f"Error dict marker missing: {chunks[0]}"
+
+    asyncio.run(_run())
