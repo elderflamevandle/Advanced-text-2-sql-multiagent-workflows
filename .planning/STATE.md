@@ -2,6 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+current_phase: 8 (executing plans)
+status: unknown
+last_updated: "2026-03-18T03:34:21.720Z"
+progress:
+  total_phases: 12
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 18
+  percent: 86
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
 current_phase: 8 (ready to plan)
 status: unknown
 last_updated: "2026-03-18T03:21:56.754Z"
@@ -113,9 +128,9 @@ progress:
 
 ## Current Status
 
-**Progress:** [████████░░] 81%
+**Progress:** [█████████░] 86%
 
-**Active Work:** Phase 8 Plan 01 complete — FallbackClient.astream() upgraded to token-level streaming (str chunks via llm.astream()), plotly 6.6.0 installed, tests/ui/ Wave 0 scaffold (7 files, 21 skipped stubs) created. Full suite: 195 passed, 21 skipped, 0 failed. UI-001, UI-002, UI-003, UI-004 requirements satisfied.
+**Active Work:** Phase 8 Plan 03 complete — streamlit_app/components/chat.py with token-by-token streaming via FallbackClient.astream() + st.write_stream(), HITL approval card, per-node stage labels. Full suite: 205 passed, 16 skipped, 0 failed.
 
 **Blockers:** None
 
@@ -128,6 +143,18 @@ progress:
 ---
 
 ## Recent Activity
+
+### 2026-03-18: Phase 8 Plan 03 Complete (Chat Interface — Wave 1)
+- streamlit_app/components/chat.py: render_chat(), submit_query(), render_hitl_card(), _build_initial_state(), _handle_graph_interrupt(), _update_session_cost(), _stream_final_answer(), _sync_aiter()
+- _stream_final_answer() uses get_llm(node='chat_stream') factory + FallbackClient.astream() + _sync_aiter adapter for st.write_stream() compatibility
+- GraphInterrupt caught in submit_query(); HITL approval card renders inline; Command(resume=decision) resumes graph
+- Command import made lazy (inside _process_hitl_decision) to survive test_hitl.py sys.modules injection of langgraph.types mock
+- tests/ui/test_chat.py: 5 skipped Wave 1 stubs replaced with 6 real assertions using SimpleNamespace for session_state mocks
+- Auto-fix: FallbackClient(node_name=...) replaced with get_llm(node=...) — constructor requires provider instances (Rule 1)
+- Auto-fix: Command lazy import to survive test_hitl.py sys.modules pollution (Rule 1)
+- Auto-fix: SimpleNamespace for session_state mocks supporting attribute assignment (Rule 1)
+- Full suite: 205 passed, 16 skipped, 0 failed (was 195 passed, 21 skipped before)
+- UI-002 requirement satisfied
 
 ### 2026-03-18: Phase 8 Plan 01 Complete (Streamlit Frontend Wave 0 Test Scaffold)
 - llm/fallback.py: FallbackClient.astream() rewritten to iterate llm.astream() for true token-level streaming; provider fallback loop preserved; usage recorded from final chunk's usage_metadata; all-fail yields str(error_dict) not raw dict
@@ -313,6 +340,12 @@ progress:
 
 ## Key Decisions
 
+### Phase 8 Plan 03 (2026-03-18)
+- get_llm(node='chat_stream') used in _stream_final_answer — FallbackClient constructor requires groq_llm/openai_llm/ollama_llm/tracker; get_llm() is the proper factory
+- Command import is lazy (inside _process_hitl_decision body) — test_hitl.py injects a mock sys.modules['langgraph.types'] lacking Command; module-level import caused all 6 tests to fail in full suite run
+- SimpleNamespace for session_state mocks — st.session_state uses attribute assignment; plain dict raises AttributeError on st.session_state.key = val pattern
+- graph accessed via 'from graph.builder import compiled_graph' (not streamlit_app.app.get_graph()) — avoids circular import; compiled_graph is the same MemorySaver-backed singleton
+
 ### Phase 8 Plan 01 (2026-03-18)
 - FallbackClient.astream() iterates llm.astream() for token-level streaming — not ainvoke() wrapping; yields str chunks for st.write_stream() compatibility; usage_metadata aggregated from final chunk; all-providers-fail yields str(error_dict) (never raw dict)
 - plotly placed in core dependencies (not optional extras) — charts are core Streamlit UI functionality, not optional capability
@@ -452,20 +485,20 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-18T03:20:41Z
+**Last Session:** 2026-03-18T03:34:21.710Z
 
-**Resume Point:** Completed 08-streamlit-frontend 08-01-PLAN.md
+**Resume Point:** Completed 08-streamlit-frontend 08-03-PLAN.md
 
 **Next Steps:**
-1. Phase 8 Plan 01 complete — Wave 0 test scaffold and astream upgrade done
-2. Proceed to Phase 8 Plan 02 (sidebar component) or Phase 8 Plan 03 (chat component)
+1. Phase 8 Plan 03 complete — chat.py with streaming, HITL card, stage labels done
+2. Proceed to Phase 8 Plan 04 (debug panel + charts components)
 
 **Context for Next Session:**
-- llm/fallback.py: FallbackClient.astream() upgraded — yields str chunks from llm.astream(); usage from final chunk
-- plotly 6.6.0 installed; pyproject.toml has plotly>=5.0.0,<7.0.0 in core deps
-- tests/ui/ scaffold: 7 files, 21 skipped stubs; conftest.py has sample_agent_state (20 fields), mock_graph, mock_db_manager
-- Full suite: 195 passed, 21 skipped, 0 failed
-- UI-001, UI-002, UI-003, UI-004 requirements satisfied (scaffold stubs in place)
+- streamlit_app/components/chat.py: full chat interface with token streaming, HITL approval, _sync_aiter adapter
+- streamlit_app/app.py: get_graph(), init_session(), reset_session() available (from Plan 02)
+- tests/ui/test_chat.py: 6 passing tests (was 5 skipped)
+- Full suite: 205 passed, 16 skipped, 0 failed
+- UI-002 satisfied; 16 skipped stubs remain for Wave 2 (debug panel, charts, e2e)
 
 ---
 
