@@ -367,6 +367,15 @@ Plans:
 - `streamlit_app/components/charts.py` - visualization logic
 - `streamlit_app/styles/` - custom CSS
 
+**Plans:** 5 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — FallbackClient.astream() upgrade + plotly dep + Wave 0 test scaffold (Wave 1)
+- [ ] 08-02-PLAN.md — app.py entry point + sidebar.py configuration UI (Wave 2)
+- [ ] 08-03-PLAN.md — chat.py with streaming, HITL approval card, session management (Wave 2)
+- [ ] 08-04-PLAN.md — debug_panel.py + charts.py + app.py wiring (Wave 3)
+- [ ] 08-05-PLAN.md — Human verification checkpoint (Wave 4)
+
 **Dependencies:**
 - Phase 2 (graph for execution)
 - Phase 7 (LLM integration)
@@ -587,5 +596,6 @@ Plans:
 *Phase 3 planned: 2026-03-14*
 *Phase 4 planned: 2026-03-15*
 *Phase 5 planned: 2026-03-15*
+*Phase 8 planned: 2026-03-17*
 *Milestone: v1.0*
 *Estimated duration: 3-4 weeks*
