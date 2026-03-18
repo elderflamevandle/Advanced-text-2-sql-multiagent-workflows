@@ -72,7 +72,7 @@ def main():
 
     # Chat area placeholder — filled by chat.py in Plan 03
     st.title("Text-to-SQL Assistant")
-    if not st.session_state.messages:
+    if not st.session_state.messages and not st.session_state.get("hitl_pending"):
         # Empty state: welcome message + sample questions
         st.markdown("### Ask a question about your database")
         st.markdown("Try one of these examples:")
@@ -90,7 +90,7 @@ def main():
                 on_click=lambda s=q: st.session_state.update({"_pending_query": s}),
             )
     else:
-        # Render message history — full chat rendering delegated to chat.py
+        # Render chat — handles messages, HITL approval card, and new query input
         from streamlit_app.components.chat import render_chat
         render_chat()
 
