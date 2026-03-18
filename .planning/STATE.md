@@ -4,6 +4,21 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 8 (executing plans)
 status: unknown
+last_updated: "2026-03-18T03:47:21.052Z"
+progress:
+  total_phases: 12
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 20
+  percent: 95
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 8 (executing plans)
+status: unknown
 last_updated: "2026-03-18T03:38:36.639Z"
 progress:
   total_phases: 12
@@ -143,9 +158,9 @@ progress:
 
 ## Current Status
 
-**Progress:** [█████████░] 90%
+**Progress:** [██████████] 95%
 
-**Active Work:** Phase 8 Plan 02 complete — streamlit_app/app.py (get_graph cache_resource, init_session 14 keys, reset_session, main() with sidebar+chat), streamlit_app/components/sidebar.py (4-section groups: DB connection, API keys, LLM settings, session controls), .streamlit/config.toml, streamlit_app/styles/custom.css. Full suite: 210 passed, 11 skipped, 0 failed.
+**Active Work:** Phase 8 Plan 04 complete — debug_panel.py (4-section debug expander: SQL+Explanation, Query Plan, Retry Logs, LLM Usage table, Edit & Rerun via executor_node bypass), charts.py (detect_chart_type column-name heuristic, render_chart_with_toggle with px.line/px.bar, Line/Bar/Table toggle), app.py updated (render_chat unconditional when messages OR hitl_pending). Full suite: 222 passed, 1 skipped, 0 failed.
 
 **Blockers:** None
 
@@ -158,6 +173,16 @@ progress:
 ---
 
 ## Recent Activity
+
+### 2026-03-18: Phase 8 Plan 04 Complete (Debug Panel and Visualization Dashboard — Wave 2/3)
+- streamlit_app/components/debug_panel.py: render_debug_panel() with auto-expand (retry_count>0 or error_log present); 4 sections: Generated SQL+Explanation, Query Plan, Retry Logs, LLM Usage table; Edit & Rerun section via rerun_sql() -> asyncio.run(executor_node({**state, generated_sql: edited}))
+- streamlit_app/components/charts.py: detect_chart_type() column-name heuristic (date/time keyword -> Line; string+numeric -> Bar; else None); render_chart_with_toggle() with Line/Bar/Table radio, px.line()/px.bar() via plotly.express; _select_axes() auto-picks x/y columns
+- streamlit_app/app.py: main() condition updated — render_chat() called when messages OR hitl_pending (HITL path unified)
+- tests/ui/test_debug_panel.py: 6 TDD tests replacing 5 Wave 2 skipped stubs
+- tests/ui/test_charts.py: 5 TDD tests replacing 4 Wave 2 skipped stubs
+- tests/ui/test_e2e.py: test_app_imports_without_exception passes; AppTest stub skipped (requires live Streamlit)
+- Full suite: 222 passed, 1 skipped, 0 failed (was 210/11/0 — 12 new active tests)
+- UI-003, UI-004 requirements satisfied; Phase 8 complete
 
 ### 2026-03-18: Phase 8 Plan 02 Complete (App Entry Point and Configuration Sidebar — Wave 1)
 - streamlit_app/app.py: get_graph() with @st.cache_resource, init_session() (14 session keys: messages, thread_id, db_manager, session_tokens, session_cost, hitl_enabled, hitl_pending, hitl_config, hitl_decision, hitl_initial_sql, last_state, groq_api_key, openai_api_key, pinecone_api_key), reset_session() (clears all + reinits), main()
@@ -365,6 +390,13 @@ progress:
 
 ## Key Decisions
 
+### Phase 8 Plan 04 (2026-03-18)
+- detect_chart_type() uses column-name heuristics (no chart_type in AgentState): date/time keyword in column name -> "Line"; at least one object + one numeric column -> "Bar"; empty/single-column/all-numeric -> None (no chart)
+- render_debug_panel() auto-expands when retry_count > 0 OR error_log is not None — surfaces debug info automatically when correction loop ran; collapsed by default for successful queries
+- rerun_sql() calls asyncio.run(executor_node({**state, "generated_sql": edited_sql})) — bypasses planner/generator/HITL entirely; returns dict with db_results or error_log
+- app.py main() condition: render_chat() when `not messages AND not hitl_pending` is False — ensures HITL card renders even before first message (e.g., first query triggers HITL review)
+- widget keys use id(state)/id(results) for uniqueness — prevents Streamlit DuplicateWidgetID when multiple assistant messages each have their own debug panel and chart toggle
+
 ### Phase 8 Plan 02 (2026-03-18)
 - AttrDict (dict subclass with __getattr__/__setattr__) used as st.session_state mock — enables both key-in and attribute-access patterns needed by app.py and sidebar.py in tests without a running Streamlit server
 - st.columns(N) mock requires side_effect=lambda n: [MagicMock()]*n — MagicMock default return value is not iterable for tuple unpacking in `col1, col2 = st.columns(2)`
@@ -516,22 +548,22 @@ None currently.
 
 ## Session Continuity
 
-**Last Session:** 2026-03-18T03:36:24Z
+**Last Session:** 2026-03-18T03:47:21.043Z
 
-**Resume Point:** Completed 08-streamlit-frontend 08-02-PLAN.md
+**Resume Point:** Completed 08-streamlit-frontend 08-04-PLAN.md
 
 **Next Steps:**
-1. Phase 8 Plan 02 complete — app.py entry point and sidebar.py with 4 section groups done
-2. Phase 8 Plan 03 also complete — chat.py with streaming, HITL card, stage labels done
-3. Proceed to Phase 8 Plan 04 (debug panel + charts components)
+1. Phase 8 Plans 01-04 complete — entire Streamlit frontend implemented
+2. Proceed to Phase 9 (next phase per ROADMAP.md)
 
 **Context for Next Session:**
-- streamlit_app/app.py: get_graph(), init_session() (14 keys), reset_session(), main()
-- streamlit_app/components/sidebar.py: render_sidebar() 4 sections, _do_connect() wired to DatabaseManager
-- streamlit_app/components/chat.py: full chat interface with token streaming, HITL approval, _sync_aiter adapter
-- tests/ui/test_sidebar.py: 5 passing tests (was 5 skipped); test_app.py: 4 new passing tests
-- Full suite: 210 passed, 11 skipped, 0 failed
-- UI-001 satisfied (Plan 02); UI-002 satisfied (Plan 03); 11 skipped stubs remain for Wave 2 (debug panel, charts, e2e)
+- streamlit_app/app.py: get_graph(), init_session() (14 keys), reset_session(), main() (render_chat when messages OR hitl_pending)
+- streamlit_app/components/sidebar.py: render_sidebar() 4 sections
+- streamlit_app/components/chat.py: full chat with streaming, HITL, _sync_aiter adapter
+- streamlit_app/components/debug_panel.py: render_debug_panel() 4-section debug expander, rerun_sql() executor bypass
+- streamlit_app/components/charts.py: detect_chart_type() heuristic, render_chart_with_toggle() plotly px.line/px.bar
+- Full suite: 222 passed, 1 skipped, 0 failed
+- UI-001, UI-002, UI-003, UI-004 all satisfied; Phase 8 complete
 
 ---
 
