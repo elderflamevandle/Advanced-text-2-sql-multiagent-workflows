@@ -7,10 +7,13 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 
-def render_debug_panel(state: dict):
+def render_debug_panel(state: dict, msg_key: str = ""):
     """Render the collapsible debug expander for an assistant response.
 
     Auto-expands when retry_count > 0 or error_log is present (signals a correction loop ran).
+
+    ``msg_key`` is passed through to _render_edit_rerun_section so that text_area and button
+    widget keys are stable and unique per message across reruns (avoids StreamlitDuplicateElementKey).
     """
     retry_count = state.get("retry_count", 0)
     has_error = state.get("error_log") is not None
@@ -21,7 +24,7 @@ def render_debug_panel(state: dict):
         _render_query_plan_section(state)
         _render_retry_section(state)
         _render_usage_section(state)
-        _render_edit_rerun_section(state)
+        _render_edit_rerun_section(state, msg_key=msg_key)
 
 
 def _render_sql_section(state: dict):
@@ -116,14 +119,15 @@ def _render_usage_section(state: dict):
         st.metric("Ragas Confidence", f"{ragas_score:.3f}")
 
 
-def _render_edit_rerun_section(state: dict):
+def _render_edit_rerun_section(state: dict, msg_key: str = ""):
     """Edit & Rerun SQL — bypasses full graph, calls executor_node directly."""
     st.subheader("Edit & Rerun SQL")
     st.caption("Bypass the planner/generator — execute modified SQL directly against the database.")
     generated_sql = state.get("generated_sql") or ""
-    # Use unique key based on state id to avoid widget conflicts between messages
-    edit_key = f"edit_sql_{id(state)}"
-    btn_key = f"rerun_btn_{id(state)}"
+    # Use stable msg_key instead of id(state) — id() can be recycled across reruns,
+    # causing StreamlitDuplicateElementKey when the same message is rendered in multiple contexts.
+    edit_key = f"edit_sql_{msg_key}"
+    btn_key = f"rerun_btn_{msg_key}"
     edited_sql = st.text_area("SQL to execute:", value=generated_sql, height=120, key=edit_key)
     if st.button("Rerun", key=btn_key, type="secondary"):
         result = rerun_sql(edited_sql, state)

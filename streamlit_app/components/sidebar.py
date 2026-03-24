@@ -1,6 +1,5 @@
 """Configuration sidebar — renders all 4 section groups into st.sidebar."""
 import os
-
 import streamlit as st
 import yaml
 
@@ -36,10 +35,10 @@ def render_sidebar():
         creds = {}
         if db_type == "DuckDB":
             file_path = st.text_input("File Path", value="data/chinook.db", key="duckdb_path")
-            creds = {"file_path": file_path}
+            creds = {"db_path": file_path}
         elif db_type == "SQLite":
             file_path = st.text_input("File Path", value="data/chinook.db", key="sqlite_path")
-            creds = {"file_path": file_path}
+            creds = {"db_path": file_path}
         else:
             creds["host"] = st.text_input("Host", value="localhost", key="db_host")
             creds["port"] = st.number_input(
@@ -126,8 +125,8 @@ def render_sidebar():
         st.caption(f"Session: {tokens:,} tokens | ${cost:.4f}")
 
         if st.button("New Session / Clear Chat", key="clear_btn"):
-            from streamlit_app.app import reset_session
-            reset_session()
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
 
 
@@ -136,9 +135,11 @@ def _do_connect(db_type: str, creds: dict):
     from database.manager import DatabaseManager
 
     try:
+        from database.manager import set_active_manager
         mgr = DatabaseManager(db_type, **creds)
         schema = mgr.get_schema()
-        st.session_state["db_manager"] = mgr
+        set_active_manager(mgr)
+        st.session_state["db_manager"] = mgr  # kept for UI checks only
         st.session_state["_connect_status"] = {"ok": True, "tables": len(schema)}
     except Exception as exc:
         st.session_state["_connect_status"] = {"ok": False, "error": str(exc)[:120]}

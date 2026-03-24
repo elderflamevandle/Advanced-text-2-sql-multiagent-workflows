@@ -30,6 +30,6 @@ safety:
   config_file: config/safety_config.yaml
 
 hitl:
-  enabled: true
+  enabled: false
   timeout_seconds: 300
   auto_approve_simple: true

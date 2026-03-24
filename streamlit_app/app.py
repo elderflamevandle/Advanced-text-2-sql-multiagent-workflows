@@ -1,6 +1,14 @@
 """Text-to-SQL Assistant — Streamlit application entry point."""
 import os
+import sys
 import uuid
+from pathlib import Path
+
+# Ensure project root is on sys.path so that `database`, `graph`, `llm`, etc. are importable
+# regardless of which directory Streamlit is launched from.
+_PROJECT_ROOT = str(Path(__file__).parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
 import yaml
@@ -67,7 +75,7 @@ def reset_session():
 def main():
     init_session()
 
-    from streamlit_app.components.sidebar import render_sidebar
+    from components.sidebar import render_sidebar
     render_sidebar()
 
     # Chat area placeholder — filled by chat.py in Plan 03
@@ -90,9 +98,15 @@ def main():
                 on_click=lambda s=q: st.session_state.update({"_pending_query": s}),
             )
     else:
-        # Render chat — handles messages, HITL approval card, and new query input
-        from streamlit_app.components.chat import render_chat
+        # Render chat — messages, HITL card (no chat_input here)
+        from components.chat import render_chat
         render_chat()
+
+    # Chat input always visible — handles both empty state and active chat
+    pending = st.session_state.pop("_pending_query", None)
+    if prompt := (st.chat_input("Ask a question about your data...") or pending):
+        from components.chat import submit_query
+        submit_query(prompt)
 
 
 main()

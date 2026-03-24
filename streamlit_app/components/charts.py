@@ -61,12 +61,16 @@ def _select_axes(df: pd.DataFrame, chart_type: str) -> tuple[str, str]:
     return x_col, y_col
 
 
-def render_chart_with_toggle(results: list[dict], state: dict):
+def render_chart_with_toggle(results: list[dict], state: dict, msg_key: str = ""):
     """Render a Plotly chart with a Line/Bar/Table toggle below it.
 
     Auto-detects chart type from column names. Shows nothing if no chart is appropriate
     and only one representation (table) would be shown anyway — table is already rendered
     by chat.py's st.dataframe call.
+
+    ``msg_key`` is a stable, caller-supplied string that makes widget keys unique across
+    all messages in a single rerun without relying on id() (which can be recycled by the
+    Python allocator across reruns and cause StreamlitDuplicateElementKey errors).
     """
     if not results:
         return
@@ -76,9 +80,8 @@ def render_chart_with_toggle(results: list[dict], state: dict):
         return  # No chart-worthy structure; table already shown by chat.py
 
     df = pd.DataFrame(results)
-    # Chart type toggle — default to auto-detected type
-    # Use a unique key to avoid widget conflicts between different messages
-    toggle_key = f"chart_toggle_{id(results)}"
+    # Chart type toggle — use stable msg_key rather than id() to avoid duplicate widget keys
+    toggle_key = f"chart_toggle_{msg_key}"
     chart_type = st.radio(
         "Chart type",
         ["Line", "Bar", "Table"],

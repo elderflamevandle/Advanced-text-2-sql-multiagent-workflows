@@ -1,5 +1,6 @@
 """Chat interface — rendering, query submission, streaming, and HITL approval card."""
 import asyncio
+import concurrent.futures
 import logging
 from typing import Generator
 
@@ -52,9 +53,9 @@ def _sync_aiter(async_gen) -> Generator[str, None, None]:
 
 def render_chat():
     """Main chat rendering loop. Called from app.py when messages exist."""
-    # Render existing messages
-    for msg in st.session_state.messages:
-        _render_message(msg)
+    # Render existing messages — pass stable index-based key to avoid duplicate widget keys
+    for i, msg in enumerate(st.session_state.messages):
+        _render_message(msg, msg_key=f"msg_{i}")
 
     # Handle pending HITL decision (set by button click on previous re-run)
     if st.session_state.get("hitl_decision") and st.session_state.get("hitl_pending"):
@@ -67,27 +68,39 @@ def render_chat():
             explanation=st.session_state.hitl_pending.get("sql_explanation", ""),
         )
 
-    # Accept new query input
-    pending = st.session_state.pop("_pending_query", None)  # from sample question buttons
-    if prompt := (st.chat_input("Ask a question about your data...") or pending):
-        submit_query(prompt)
+    # Note: chat_input and _pending_query handling is owned by app.py (always visible)
 
 
-def _render_message(msg: dict):
+def _render_message(msg: dict, msg_key: str = ""):
     """Render a single stored message (user or assistant)."""
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         # Render embedded results/charts/debug if present
         if msg.get("state"):
-            _render_assistant_extras(msg["state"])
+            _render_assistant_extras(msg["state"], msg_key=msg_key)
 
 
 # ---------------------------------------------------------------------------
 # Query submission — stage labels + token streaming
 # ---------------------------------------------------------------------------
 
+def _sync_api_keys():
+    """Push sidebar API keys from session_state into os.environ for LLM clients."""
+    import os
+    key_map = {
+        "groq_api_key": "GROQ_API_KEY",
+        "openai_api_key": "OPENAI_API_KEY",
+        "pinecone_api_key": "PINECONE_API_KEY",
+    }
+    for state_key, env_key in key_map.items():
+        val = st.session_state.get(state_key, "")
+        if val:
+            os.environ[env_key] = val
+
+
 def submit_query(user_query: str):
     """Process a new user query: add to history, run graph, stream response, store result."""
+    _sync_api_keys()
     # Add user message
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -101,9 +114,7 @@ def submit_query(user_query: str):
         # Phase 1: Run graph with per-node stage labels inside st.status
         with st.status("Processing query...", expanded=True) as status_container:
             try:
-                final_state = asyncio.run(
-                    _run_graph_streaming(initial_state, config, status_container)
-                )
+                final_state = _run_graph_streaming(initial_state, config, status_container)
                 status_container.update(label="Complete", state="complete", expanded=False)
             except GraphInterrupt as exc:
                 _handle_graph_interrupt(exc, config)
@@ -124,7 +135,9 @@ def submit_query(user_query: str):
         # streamed_text is the full accumulated string returned by st.write_stream()
         answer = streamed_text if streamed_text else raw_answer
 
-        _render_assistant_extras(final_state)
+        # Live render uses "live" key — this message has not been appended to messages yet,
+        # so it won't be re-rendered by the messages loop on the same rerun.
+        _render_assistant_extras(final_state, msg_key="live")
 
     # Store assistant message with the full answer text
     st.session_state.messages.append({
@@ -165,17 +178,43 @@ def _stream_final_answer(answer_text: str) -> str:
 # Graph streaming helper (per-node stage labels)
 # ---------------------------------------------------------------------------
 
-async def _run_graph_streaming(initial_state: dict, config: dict, status_container) -> dict:
-    """Run graph with astream(stream_mode='updates') for per-node stage labels.
-    Returns the final merged state dict.
+def _run_async(coro):
+    """Run an async coroutine in a dedicated thread with its own event loop.
+
+    All agent nodes are async, so the graph must use the async API (astream/ainvoke).
+    Running in an isolated thread ensures LangGraph's internal ContextVars
+    (including CONFIG_KEY used by interrupt()/get_config()) are initialised cleanly
+    without interference from Streamlit's event loop context on Python 3.10.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
+
+
+async def _astream_graph(initial_state: dict, config: dict, labels: list) -> dict:
+    """Async: stream graph, collect node labels, then return the full checkpoint state.
+
+    Uses stream_mode="updates" to get per-node labels for the status bar, then calls
+    aget_state() to fetch the complete checkpoint state (includes initial-state-only fields
+    like user_query and db_type that node output dicts never contain).
     """
     from graph.builder import compiled_graph as graph
-    final_state = {}
     async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
-        for node_name, node_output in chunk.items():
-            label = NODE_LABELS.get(node_name, f"Running {node_name}...")
-            status_container.update(label=label, state="running")
-            final_state.update(node_output)
+        for node_name in chunk:
+            labels.append(NODE_LABELS.get(node_name, f"Running {node_name}..."))
+    # Fetch full checkpoint state — captures every field, not just node output diffs
+    snapshot = await graph.aget_state(config)
+    return dict(snapshot.values) if snapshot else {}
+
+
+def _run_graph_streaming(initial_state: dict, config: dict, status_container) -> dict:
+    """Run the async graph in an isolated thread, updating status labels as nodes complete."""
+    labels: list = []
+    # Run graph in dedicated thread — isolates LangGraph ContextVars from Streamlit's loop
+    final_state = _run_async(_astream_graph(initial_state, config, labels))
+    # Replay node labels back into the status container from the main thread
+    for label in labels:
+        status_container.update(label=label, state="running")
     return final_state
 
 
@@ -184,13 +223,36 @@ async def _run_graph_streaming(initial_state: dict, config: dict, status_contain
 # ---------------------------------------------------------------------------
 
 def _build_initial_state(user_query: str) -> dict:
-    """Build the initial AgentState dict for graph invocation."""
+    """Build the initial AgentState dict for graph invocation.
+
+    DatabaseManager is intentionally excluded — it is not msgpack-serializable
+    and cannot be stored in LangGraph's MemorySaver checkpoint. Instead, the
+    schema is extracted here and passed as a plain dict, and agent nodes that
+    need to execute SQL use get_active_manager() from database.manager.
+    """
+    from database.manager import get_active_manager
+    db_type = (st.session_state.get("sidebar_db_type") or "SQLite").lower()
+    mgr = get_active_manager()
+    schema = None
+    if mgr is not None:
+        try:
+            schema = mgr.get_schema()
+        except Exception as exc:
+            logger.warning("_build_initial_state: failed to extract schema: %s", exc)
     return {
         "messages": [],
         "user_query": user_query,
-        "db_type": (st.session_state.get("sidebar_db_type") or "SQLite").lower(),
-        "db_manager": st.session_state.get("db_manager"),
+        "db_type": db_type,
+        "schema": schema,
         "retry_count": 0,
+        # Explicitly reset per-query fields to prevent MemorySaver checkpoint leakage
+        # across separate queries on the same thread_id.
+        "error_log": None,
+        "sql_history": [],
+        "correction_plan": None,
+        "approval_status": None,
+        "final_answer": None,
+        "db_results": None,
     }
 
 
@@ -215,17 +277,19 @@ def _process_hitl_decision():
     st.session_state.hitl_decision = None
 
     try:
-        final_state = asyncio.run(
-            graph.ainvoke(Command(resume=decision), config=config)
-        )
+        async def _resume():
+            return await graph.ainvoke(Command(resume=decision), config=config)
+        final_state = _run_async(_resume())
     except Exception as exc:
         st.error(f"Error resuming after HITL: {exc}")
         return
 
     answer = final_state.get("final_answer") or "Query completed."
+    # Determine key based on the 0-based index this message will occupy once appended
+    live_key = f"msg_{len(st.session_state.messages)}"
     with st.chat_message("assistant"):
         st.markdown(answer)
-        _render_assistant_extras(final_state)
+        _render_assistant_extras(final_state, msg_key=live_key)
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer,
@@ -265,27 +329,34 @@ def render_hitl_card(sql: str, explanation: str):
 # Assistant extras (results table, chart, debug panel)
 # ---------------------------------------------------------------------------
 
-def _render_assistant_extras(state: dict):
-    """Render results table, download button, and debug panel for an assistant message."""
+def _render_assistant_extras(state: dict, msg_key: str = ""):
+    """Render results table, download button, and debug panel for an assistant message.
+
+    ``msg_key`` must be unique per logical message across the entire rerun so that
+    all child widgets (download button, chart toggle, edit/rerun text_area) get
+    stable, non-colliding keys.  Callers pass either ``f"msg_{i}"`` (history loop)
+    or ``"live"`` / a positional key (live render during submit_query).
+    """
     db_results = state.get("db_results")
     if db_results:
         import pandas as pd
         df = pd.DataFrame(db_results)
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False)
+        # Use msg_key for a stable download button key that doesn't rely on id()
         st.download_button("Download CSV", data=csv, file_name="results.csv",
-                           mime="text/csv", key=f"dl_{id(state)}")
+                           mime="text/csv", key=f"dl_{msg_key}")
         # Chart rendering delegated to charts.py (Plan 04)
         try:
-            from streamlit_app.components.charts import render_chart_with_toggle
-            render_chart_with_toggle(db_results, state)
+            from components.charts import render_chart_with_toggle
+            render_chart_with_toggle(db_results, state, msg_key=msg_key)
         except ImportError:
             pass  # charts.py not yet created in Wave 2
 
     # Debug panel — delegated to debug_panel.py (Plan 04)
     try:
-        from streamlit_app.components.debug_panel import render_debug_panel
-        render_debug_panel(state)
+        from components.debug_panel import render_debug_panel
+        render_debug_panel(state, msg_key=msg_key)
     except ImportError:
         pass  # debug_panel.py not yet created in Wave 2
 
