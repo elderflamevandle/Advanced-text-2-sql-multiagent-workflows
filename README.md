@@ -53,6 +53,8 @@ User Question  →  Gatekeeper  →  Schema Linker  →  Query Planner  →  SQL
 
 ## Architecture
 
+![Software Engineering Architecture & Code Flow Map](assets/architecture.png)
+
 ### Agent Nodes
 
 | Node | Responsibility |
