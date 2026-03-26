@@ -47,11 +47,12 @@ async def gatekeeper_node(state: AgentState) -> dict:
     """Classifies user query, rewrites follow-ups, blocks destructive NL, checks db connection."""
     user_query = state.get("user_query", "")
 
-    # 1. DB connection check
-    if state.get("db_manager") is None:
-        logger.info("gatekeeper_node: no db_manager, returning early")
+    # 1. DB connection check — schema presence confirms a database is connected.
+    # db_manager is not stored in state (not msgpack-serializable); use schema instead.
+    if state.get("schema") is None:
+        logger.info("gatekeeper_node: no schema in state, returning early")
         return {
-            "final_answer": "Please connect to a database first.",
+            "final_answer": "Please connect to a database first using the sidebar.",
             "query_type": "conversational",
         }
 
@@ -64,11 +65,11 @@ async def gatekeeper_node(state: AgentState) -> dict:
             "query_type": "conversational",
         }
 
-    # 3. Lazy import ChatGroq
-    from langchain_groq import ChatGroq
+    # 3. Lazy import get_llm (FallbackClient factory)
+    from llm.fallback import get_llm
     from langchain_core.messages import SystemMessage, HumanMessage
 
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, max_tokens=1024)
+    llm = get_llm(node="gatekeeper", state=state)
 
     # 4. Build messages for classification
     chat_history = state.get("messages", [])

@@ -14,6 +14,22 @@ load_dotenv(override=False)
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level active manager registry
+# Shared across threads; set by the sidebar on connect, read by agent nodes.
+# Keeps DatabaseManager out of LangGraph AgentState (not msgpack-serializable).
+# ---------------------------------------------------------------------------
+_active_manager: "DatabaseManager | None" = None
+
+
+def set_active_manager(mgr: "DatabaseManager") -> None:
+    global _active_manager
+    _active_manager = mgr
+
+
+def get_active_manager() -> "DatabaseManager | None":
+    return _active_manager
+
 
 def _get_connector(db_type: str, **kwargs) -> BaseConnector:
     """Factory: return a configured connector instance for the given db_type.

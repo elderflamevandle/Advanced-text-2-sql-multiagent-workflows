@@ -1,0 +1,3 @@
+/* Text-to-SQL Assistant — minimal overrides */
+.stSidebar [data-testid="stSidebarNav"] { display: none; }
+.cost-ticker { font-size: 0.75rem; color: #666; }

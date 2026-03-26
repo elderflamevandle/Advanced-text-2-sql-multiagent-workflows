@@ -18,6 +18,8 @@ def make_initial_state(user_query: str = "test query") -> dict:
         "execution_metadata": None,
         "approval_status": None,
         "error_log": None,
+        "correction_plan": None,
+        "sql_history": None,
         "retry_count": 0,
         "final_answer": None,
     }

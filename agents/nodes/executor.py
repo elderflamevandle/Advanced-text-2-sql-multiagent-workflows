@@ -130,8 +130,9 @@ async def executor_node(state: AgentState) -> dict:
     logger.info("executor_node called for query: %s", state.get("user_query", ""))
 
     sql: str | None = state.get("generated_sql")
-    db_manager = state.get("db_manager")
     db_type: str = state.get("db_type", "unknown")
+    from database.manager import get_active_manager
+    db_manager = get_active_manager()
 
     # ------------------------------------------------------------------
     # 1. Null checks
