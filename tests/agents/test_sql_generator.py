@@ -151,3 +151,64 @@ def test_dialect_reminders():
     messages = call_args[0][0]
     system_msgs = [m for m in messages if hasattr(m, "content") and ("ILIKE" in m.content or "TO_CHAR" in m.content)]
     assert system_msgs, "Postgres dialect reminder not found in system message"
+
+
+# ---------------------------------------------------------------------------
+# _validate_sql — delegates to database.safety.scan_sql with the db dialect
+# ---------------------------------------------------------------------------
+
+def test_validate_sql_strips_fences_and_returns_clean_sql():
+    import agents.nodes.sql_generator as sg_mod
+
+    assert sg_mod._validate_sql("```sql\nSELECT 1\n```", "sqlite") == "SELECT 1"
+    assert sg_mod._validate_sql("SELECT 1") == "SELECT 1"
+
+
+@pytest.mark.parametrize("db_type,sql", [
+    ("sqlite", "SELECT 1; DROP TABLE Invoice"),
+    ("postgresql", "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"),
+    ("postgresql", "SELECT * INTO backup FROM Invoice"),
+    ("postgresql", "SELECT pg_sleep(10)"),
+    ("mysql", "SELECT * FROM Invoice FOR UPDATE"),
+    ("duckdb", "SELECT * FROM read_csv('/etc/passwd')"),
+    ("sqlite", "PRAGMA table_info(Invoice)"),
+    ("sqlite", "SELECT * FROM Invoice WHERE"),
+    ("sqlite", "Sorry, I cannot answer that."),
+])
+def test_validate_sql_rejects_unsafe_sql_with_reason(db_type, sql):
+    import agents.nodes.sql_generator as sg_mod
+    from database.safety import scan_sql
+
+    with pytest.raises(ValueError) as excinfo:
+        sg_mod._validate_sql(sql, db_type)
+    assert scan_sql(sql, dialect=db_type)["reason"] in str(excinfo.value)
+
+
+def test_validate_sql_uses_state_dialect():
+    """Backtick identifiers are valid MySQL and must pass when db_type=mysql."""
+    import agents.nodes.sql_generator as sg_mod
+
+    mock_llm = _make_llm_mock("SQL:\nSELECT `Total` FROM `Invoice`\nEXPLANATION:\nTotals.")
+    state = make_agent_state(user_query="totals")
+    state["query_plan"] = {}
+    state["db_type"] = "mysql"
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(sg_mod.sql_generator_node(state))
+
+    assert result.get("generated_sql") == "SELECT `Total` FROM `Invoice`"
+
+
+def test_node_rejects_multi_statement_sql():
+    """A SELECT followed by a second statement no longer slips through."""
+    import agents.nodes.sql_generator as sg_mod
+
+    mock_llm = _make_llm_mock(
+        "SQL:\nSELECT * FROM Invoice; DROP TABLE Invoice\nEXPLANATION:\nBad."
+    )
+    state = make_agent_state(user_query="show invoices")
+    state["query_plan"] = {}
+    with _patch_get_llm(mock_llm):
+        result = asyncio.run(sg_mod.sql_generator_node(state))
+
+    assert result.get("generated_sql") is None
+    assert "Multiple statements" in result.get("error_log", "")

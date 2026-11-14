@@ -2,11 +2,11 @@
 import asyncio
 import concurrent.futures
 import logging
+import re
 from typing import Generator
 
 import streamlit as st
 from langgraph.errors import GraphInterrupt
-from llm.fallback import get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -25,26 +25,13 @@ NODE_LABELS = {
 
 
 # ---------------------------------------------------------------------------
-# Async-to-sync adapter for st.write_stream compatibility
+# Local chunker for st.write_stream (typing effect without any LLM call)
 # ---------------------------------------------------------------------------
 
-def _sync_aiter(async_gen) -> Generator[str, None, None]:
-    """Drive an async generator synchronously for use with st.write_stream().
-
-    st.write_stream() expects a synchronous iterable of str chunks.
-    We can't use asyncio.run() inside a running loop, so we create a dedicated
-    event loop in the current thread to drain the async generator.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        while True:
-            try:
-                chunk = loop.run_until_complete(async_gen.__anext__())
-                yield chunk
-            except StopAsyncIteration:
-                break
-    finally:
-        loop.close()
+def _iter_text_chunks(text: str) -> Generator[str, None, None]:
+    """Yield the text word by word, whitespace preserved; "".join(chunks) == text."""
+    for match in re.finditer(r"\S+\s*|\s+", text):
+        yield match.group(0)
 
 
 # ---------------------------------------------------------------------------
@@ -127,13 +114,10 @@ def submit_query(user_query: str):
                 logger.exception("Graph execution error: %s", exc)
                 return
 
-        # Phase 2: Stream the final answer token-by-token using FallbackClient.astream()
-        # This uses the upgraded astream() from 08-01 which yields str chunks.
-        # st.write_stream() renders each chunk as it arrives and returns the full text.
-        raw_answer = final_state.get("final_answer") or "No answer generated."
-        streamed_text = _stream_final_answer(raw_answer)
-        # streamed_text is the full accumulated string returned by st.write_stream()
-        answer = streamed_text if streamed_text else raw_answer
+        # Phase 2: show the graph's final_answer itself. No LLM is involved here: the
+        # formatter node already wrote the answer; this only renders it progressively.
+        answer = final_state.get("final_answer") or "No answer generated."
+        _stream_final_answer(answer)
 
         # Live render uses "live" key — this message has not been appended to messages yet,
         # so it won't be re-rendered by the messages loop on the same rerun.
@@ -150,28 +134,17 @@ def submit_query(user_query: str):
 
 
 def _stream_final_answer(answer_text: str) -> str:
-    """Stream the final answer token-by-token using FallbackClient.astream() + st.write_stream().
+    """Render the final answer text as-is and return it unchanged.
 
-    Uses get_llm(node='chat_stream') to obtain a configured FallbackClient,
-    then streams the answer token-by-token via FallbackClient.astream().
-
-    If FallbackClient is unavailable or streaming fails, falls back to st.markdown().
-
-    Returns the full answer text (either from write_stream or the fallback).
+    The text is fed to st.write_stream() from a local generator, purely for the typing
+    effect. It is never sent to an LLM. Falls back to st.markdown() if streaming fails.
     """
     try:
-        from langchain_core.messages import HumanMessage
-
-        # Use get_llm factory to get a configured FallbackClient
-        client = get_llm(node="chat_stream")
-        async_gen = client.astream([HumanMessage(content=answer_text)])
-        # st.write_stream() requires a sync iterable — use the _sync_aiter adapter
-        result = st.write_stream(_sync_aiter(async_gen))
-        return result if isinstance(result, str) else answer_text
+        st.write_stream(_iter_text_chunks(answer_text))
     except Exception as exc:
-        logger.warning("FallbackClient.astream streaming failed (%s) — falling back to markdown", exc)
+        logger.warning("st.write_stream failed (%s); falling back to markdown", exc)
         st.markdown(answer_text)
-        return answer_text
+    return answer_text
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +220,13 @@ def _build_initial_state(user_query: str) -> dict:
         "retry_count": 0,
         # Explicitly reset per-query fields to prevent MemorySaver checkpoint leakage
         # across separate queries on the same thread_id.
+        "usage_metadata": None,  # reducer field: None resets the accumulated list
+        "resolved_query": None,
+        "query_type": None,
+        "query_plan": None,
+        "generated_sql": None,
+        "sql_explanation": None,
+        "execution_metadata": None,
         "error_log": None,
         "sql_history": [],
         "correction_plan": None,

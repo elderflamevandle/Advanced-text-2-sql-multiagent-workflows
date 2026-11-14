@@ -31,6 +31,8 @@ def _make_st_mock():
     st_mock.session_state.__contains__ = lambda self_inner, key: key in fake_state
     # Make st.columns(N) return N MagicMock columns (unpacking support)
     st_mock.columns.side_effect = lambda n: [MagicMock() for _ in range(n)]
+    # No query submitted: importing app.py runs main(), which must not start a graph run.
+    st_mock.chat_input.return_value = None
     return st_mock, fake_state
 
 
@@ -63,7 +65,7 @@ def test_app_imports_without_error():
         st_mock=st_mock,
         extra_mocks={
             "graph.builder": builder_mock,
-            "streamlit_app.components.sidebar": sidebar_mock,
+            "components.sidebar": sidebar_mock,
         },
     )
     # If we get here without exception, import succeeded
@@ -82,7 +84,7 @@ def test_get_graph_is_cache_resource():
         st_mock=st_mock,
         extra_mocks={
             "graph.builder": builder_mock,
-            "streamlit_app.components.sidebar": sidebar_mock,
+            "components.sidebar": sidebar_mock,
         },
     )
 
@@ -99,7 +101,7 @@ def test_init_session_sets_required_keys():
 
     app_mod = _import_app(
         st_mock=st_mock,
-        extra_mocks={"streamlit_app.components.sidebar": sidebar_mock},
+        extra_mocks={"components.sidebar": sidebar_mock},
     )
 
     # Reset state, then call init_session directly
@@ -128,7 +130,7 @@ def test_reset_session_clears_and_reinitializes():
 
     app_mod = _import_app(
         st_mock=st_mock,
-        extra_mocks={"streamlit_app.components.sidebar": sidebar_mock},
+        extra_mocks={"components.sidebar": sidebar_mock},
     )
 
     # Pre-populate state with a stale key

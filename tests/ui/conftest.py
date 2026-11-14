@@ -1,17 +1,25 @@
 """Shared fixtures for UI tests."""
+import sys
+from pathlib import Path
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+# `streamlit run streamlit_app/app.py` puts the script's directory on sys.path, and app.py
+# relies on that (`from components.sidebar import ...`). Mirror it for the tests.
+_STREAMLIT_APP_DIR = str(Path(__file__).resolve().parents[2] / "streamlit_app")
+if _STREAMLIT_APP_DIR not in sys.path:
+    sys.path.insert(0, _STREAMLIT_APP_DIR)
 
 
 @pytest.fixture
 def sample_agent_state():
-    """Complete AgentState dict with all 20 fields. Used as test input for UI rendering."""
+    """Complete AgentState dict. Used as test input for UI rendering."""
     return {
         "messages": [],
         "user_query": "Show total sales by artist",
         "resolved_query": None,
         "db_type": "sqlite",
-        "db_manager": None,
         "query_type": "sql",
         "schema": {"Artist": {"columns": ["ArtistId", "Name"]}},
         "relevant_tables": ["Artist", "InvoiceLine"],

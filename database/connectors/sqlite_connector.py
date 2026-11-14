@@ -1,41 +1,103 @@
-"""SQLite connector with PRAGMA-based schema introspection and FK enforcement."""
+"""SQLite connector: read-only connections and PRAGMA-based schema introspection."""
 from __future__ import annotations
 
 import sqlite3
+import threading
+from pathlib import Path
 
-from database.connectors.base import BaseConnector
+from database.connectors.base import BaseConnector, fetch_limited, rows_to_dicts
 from database.schema_utils import ColumnInfo, FKInfo, SchemaTable
+
+_MEMORY_PATHS = {"", ":memory:"}
+
+
+def _read_only_uri(db_path: str) -> str:
+    """Build a ``file:`` URI that opens ``db_path`` read-only.
+
+    Works for relative paths, absolute POSIX paths and Windows drive paths
+    (``C:\\data\\x.db`` -> ``file:///C:/data/x.db?mode=ro``). A path that is
+    already a ``file:`` URI is kept, with ``mode=ro`` added when no mode is set.
+    """
+    if db_path.startswith("file:"):
+        if "mode=" in db_path:
+            return db_path
+        return f"{db_path}{'&' if '?' in db_path else '?'}mode=ro"
+    return f"{Path(db_path).resolve().as_uri()}?mode=ro"
 
 
 class SQLiteConnector(BaseConnector):
     """SQLite connector.
 
-    Uses Python's built-in sqlite3 module. PRAGMA foreign_keys = ON is
-    enforced on every connection. Internal sqlite_* tables are filtered out
-    of the schema.
+    Uses Python's built-in sqlite3 module. File databases are opened read-only
+    (``mode=ro``) and every connection runs ``PRAGMA query_only = ON``, so
+    write statements fail inside SQLite itself. Internal sqlite_* tables are
+    filtered out of the schema.
+
+    ``connect()`` returns one shared long-lived connection. ``acquire()`` opens
+    a dedicated connection per unit of work for file databases, so cancelling a
+    timed-out query never interrupts someone else's. In-memory databases exist
+    only inside their connection, so they always use the shared one.
     """
 
     def __init__(self, db_path: str = ":memory:"):
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def _is_memory(self) -> bool:
+        return self._db_path in _MEMORY_PATHS or "mode=memory" in self._db_path
+
+    def _open(self) -> sqlite3.Connection:
+        if self._db_path in _MEMORY_PATHS:
+            conn = sqlite3.connect(":memory:", check_same_thread=False)
+        else:
+            conn = sqlite3.connect(
+                _read_only_uri(self._db_path), uri=True, check_same_thread=False
+            )
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA query_only = ON")
+        except Exception:
+            conn.close()
+            raise
+        return conn
 
     # ------------------------------------------------------------------
     # BaseConnector interface
     # ------------------------------------------------------------------
 
     def connect(self) -> sqlite3.Connection:
-        """Open (or return existing) SQLite connection with FK enforcement."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
-            self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.commit()
-        return self._conn
+        """Open (or return the existing) shared read-only SQLite connection."""
+        with self._lock:
+            if self._conn is None:
+                self._conn = self._open()
+            return self._conn
+
+    def acquire(self) -> sqlite3.Connection:
+        """Return a dedicated connection (file DB) or the shared one (in-memory)."""
+        if self._is_memory:
+            return self.connect()
+        return self._open()
+
+    def release(self, connection: sqlite3.Connection, error: bool = False) -> None:
+        """Close a dedicated connection; the shared one stays open."""
+        if connection is self._conn:
+            return
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+    def cancel(self, connection: sqlite3.Connection) -> None:
+        """Interrupt the statement running on ``connection`` (thread-safe)."""
+        connection.interrupt()
 
     def test_connection(self) -> bool:
         """Return True if a test query succeeds."""
         try:
-            conn = self.connect()
-            conn.execute("SELECT 1")
+            with self.connection() as conn:
+                conn.execute("SELECT 1").fetchall()
             return True
         except Exception:
             return False
@@ -86,7 +148,7 @@ class SQLiteConnector(BaseConnector):
             try:
                 cur.execute(f'SELECT * FROM "{table}" LIMIT 2')
                 col_names = [d[0] for d in cur.description]
-                sample_rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
+                sample_rows = rows_to_dicts(col_names, cur.fetchall())
             except Exception:
                 sample_rows = []
 
@@ -99,12 +161,22 @@ class SQLiteConnector(BaseConnector):
 
         return schema
 
-    def execute_query(self, connection: sqlite3.Connection, sql: str) -> list[dict]:
-        """Execute SQL and return rows as list of dicts."""
+    def execute_query_limited(
+        self, connection: sqlite3.Connection, sql: str, max_rows: int | None = None
+    ) -> tuple[list[dict], bool]:
+        """Execute SQL and return ``(rows, truncated)`` reading at most max_rows + 1 rows."""
         cur = connection.cursor()
-        cur.execute(sql)
-        col_names = [d[0] for d in cur.description]
-        return [dict(zip(col_names, row)) for row in cur.fetchall()]
+        try:
+            cur.execute(sql)
+            return fetch_limited(cur, max_rows)
+        finally:
+            cur.close()
+
+    def execute_query(
+        self, connection: sqlite3.Connection, sql: str, max_rows: int | None = None
+    ) -> list[dict]:
+        """Execute SQL and return rows as list of dicts."""
+        return self.execute_query_limited(connection, sql, max_rows)[0]
 
     def close(self, connection: sqlite3.Connection) -> None:
         """Close the SQLite connection."""
@@ -112,4 +184,5 @@ class SQLiteConnector(BaseConnector):
             connection.close()
         except Exception:
             pass
-        self._conn = None
+        if connection is self._conn:
+            self._conn = None

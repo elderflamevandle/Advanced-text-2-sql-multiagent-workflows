@@ -6,7 +6,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-green?style=flat-square)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-red?style=flat-square&logo=streamlit)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-![Tests](https://img.shields.io/badge/Tests-191%2B%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/Tests-940%2B%20passing-brightgreen?style=flat-square)
 
 **A production-grade multi-agent system that converts natural language questions into accurate SQL queries and executes them — with self-correction, human approval, and live visualizations.**
 
@@ -47,7 +47,7 @@ User Question  →  Gatekeeper  →  Schema Linker  →  Query Planner  →  SQL
 - **Groq + OpenAI fallback** — Llama-3.3-70B as primary, GPT-4o as fallback, with automatic switching on failure
 - **Streamlit frontend** — chat interface, live debugging panel, Edit & Rerun SQL, auto-generated charts
 - **Token + cost tracking** per query across providers
-- **Ragas evaluation** — confidence score (0.0–1.0) returned for every query
+- **Evaluation** — Ragas scoring is planned (Phase 11) and not implemented yet
 
 ---
 
@@ -68,7 +68,7 @@ User Question  →  Gatekeeper  →  Schema Linker  →  Query Planner  →  SQL
 | **Correction Plan** | Diagnoses SQL failures using the error taxonomy |
 | **Correction SQL** | Rewrites the SQL based on the diagnosis (max 2 retries) |
 | **Formatter** | Generates a natural language answer from the results |
-| **Evaluator** | Scores the answer accuracy using Ragas |
+| **Evaluator** | Placeholder for Ragas scoring (not implemented yet) |
 
 ### State (`AgentState`)
 
@@ -279,7 +279,7 @@ text-2-sql-agentic-pipeline/
 │   └── pinecone_config.yaml # Vector index configuration
 ├── data/
 │   └── chinook.db           # Bundled sample database (music store)
-├── tests/                   # 191+ tests across all modules
+├── tests/                   # 940+ tests across all modules
 │   ├── agents/
 │   ├── database/
 │   ├── graph/

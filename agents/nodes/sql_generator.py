@@ -51,16 +51,23 @@ _DIALECT_REMINDERS: dict[str, str] = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _validate_sql(sql: str) -> str:
-    """Strip markdown fences and verify SQL starts with SELECT or WITH.
+def _validate_sql(sql: str, db_type: Optional[str] = None) -> str:
+    """Strip markdown fences and verify the SQL is a single read-only query.
+
+    Uses database.safety.scan_sql with the dialect of db_type.
 
     Returns clean SQL string on success.
-    Raises ValueError if statement is not a read-only SELECT/WITH query.
+    Raises ValueError (with the scanner's reason) if the statement is not safe.
     """
+    from database.safety import scan_sql
+
     cleaned = re.sub(r"```(?:sql)?\s*", "", sql, flags=re.IGNORECASE).replace("```", "").strip()
-    upper = cleaned.upper().lstrip()
-    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
-        raise ValueError(f"Unsafe or unsupported SQL statement (must start with SELECT or WITH): {cleaned[:80]!r}")
+    verdict = scan_sql(cleaned, dialect=db_type)
+    if not verdict["safe"]:
+        raise ValueError(
+            f"Unsafe or unsupported SQL statement ({verdict['statement_type']}): "
+            f"{verdict['reason']} SQL: {cleaned[:80]!r}"
+        )
     return cleaned
 
 
@@ -118,7 +125,7 @@ async def sql_generator_node(state: AgentState) -> dict:
     sql_part = re.sub(r"^SQL\s*:\s*", "", sql_part.strip(), flags=re.IGNORECASE).strip()
 
     try:
-        validated_sql = _validate_sql(sql_part)
+        validated_sql = _validate_sql(sql_part, db_type)
     except ValueError as exc:
         logger.warning("sql_generator_node: SQL validation failed — %s", exc)
         return {"generated_sql": None, "error_log": str(exc)}

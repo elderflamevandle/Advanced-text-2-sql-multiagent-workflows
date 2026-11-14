@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from database.connectors.base import BaseConnector
+from database.connectors.base import BaseConnector, fetch_limited, rows_to_dicts
 from database.schema_utils import ColumnInfo, FKInfo, SchemaTable
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,13 @@ class MySQLConnector(BaseConnector):
 
     mysql-connector-python is an optional extra — the import lives inside
     connect() so the module can be imported on systems without the driver.
+
+    Each connection handed out is switched to ``SESSION TRANSACTION READ ONLY``
+    and given a server-side execution time limit (``max_execution_time`` on
+    MySQL, ``max_statement_time`` on MariaDB) where the server supports one.
+    The pool resets session state on checkout, so this is re-applied each time.
+    Return connections with ``release()`` / ``close()`` or use
+    ``with connector.connection() as conn:``.
     """
 
     def __init__(
@@ -37,17 +45,22 @@ class MySQLConnector(BaseConnector):
         database: str = "mysql",
         user: str = "root",
         password: str = "",
+        max_execution_time_ms: int | None = 60_000,
+        pool_size: int = 8,
     ):
         self._host = host
         self._port = port
         self._database = database
         self._user = user
         self._password = password
+        self._max_execution_time_ms = max_execution_time_ms
+        self._pool_size = pool_size
         self._pool = None
+        self._pool_lock = threading.Lock()
 
     @_connection_retry
     def connect(self) -> object:
-        """Return a connection from the MySQL connection pool.
+        """Return a read-only connection from the MySQL connection pool.
 
         Raises ImportError (with install hint) if mysql-connector-python is not installed.
         """
@@ -58,17 +71,76 @@ class MySQLConnector(BaseConnector):
                 "MySQL support requires: pip install -e '.[mysql]'"
             ) from exc
 
-        if self._pool is None:
-            self._pool = mysql.connector.pooling.MySQLConnectionPool(
-                pool_name="text2sql",
-                pool_size=5,
-                host=self._host,
-                port=self._port,
-                database=self._database,
-                user=self._user,
-                password=self._password,
-            )
-        return self._pool.get_connection()
+        with self._pool_lock:
+            if self._pool is None:
+                self._pool = mysql.connector.pooling.MySQLConnectionPool(
+                    pool_name="text2sql",
+                    pool_size=self._pool_size,
+                    host=self._host,
+                    port=self._port,
+                    database=self._database,
+                    user=self._user,
+                    password=self._password,
+                )
+            pool = self._pool
+        conn = pool.get_connection()
+        try:
+            self._prepare_session(conn)
+        except Exception:
+            self.release(conn, error=True)
+            raise
+        return conn
+
+    def _prepare_session(self, connection: object) -> None:
+        """Make the session read-only and set the server-side time limit."""
+        cur = connection.cursor()
+        try:
+            # Required: if this fails the connection is not handed out.
+            cur.execute("SET SESSION TRANSACTION READ ONLY")
+            if self._max_execution_time_ms:
+                ms = int(self._max_execution_time_ms)
+                try:
+                    cur.execute(f"SET SESSION max_execution_time = {ms}")  # MySQL >= 5.7.8
+                except Exception:
+                    try:
+                        cur.execute(f"SET SESSION max_statement_time = {ms / 1000:.3f}")  # MariaDB
+                    except Exception:
+                        logger.debug("MySQL: no server-side statement time limit available")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    def release(self, connection: object, error: bool = False) -> None:
+        """Roll back any open transaction and return the connection to the pool."""
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        try:
+            connection.close()  # pooled connection: close() hands it back to the pool
+        except Exception as exc:
+            logger.warning("MySQL: could not return connection to pool: %s", exc)
+
+    def cancel(self, connection: object) -> None:
+        """Kill the statement running on ``connection`` from a side connection."""
+        import mysql.connector  # noqa: PLC0415
+
+        thread_id = int(connection.connection_id)
+        side = mysql.connector.connect(
+            host=self._host,
+            port=self._port,
+            database=self._database,
+            user=self._user,
+            password=self._password,
+        )
+        try:
+            cur = side.cursor()
+            cur.execute(f"KILL QUERY {thread_id}")
+            cur.close()
+        finally:
+            side.close()
 
     def get_schema(self, connection: object) -> dict[str, SchemaTable]:
         """Introspect the database via INFORMATION_SCHEMA.
@@ -144,9 +216,7 @@ class MySQLConnector(BaseConnector):
                 try:
                     cur.execute(f"SELECT * FROM `{table}` LIMIT 2")
                     col_names = [d[0] for d in cur.description]
-                    sample_rows = [
-                        dict(zip(col_names, row)) for row in cur.fetchall()
-                    ]
+                    sample_rows = rows_to_dicts(col_names, cur.fetchall())
                 except Exception:
                     sample_rows = []
 
@@ -162,27 +232,44 @@ class MySQLConnector(BaseConnector):
 
         return schema
 
-    def execute_query(self, connection: object, sql: str) -> list[dict]:
-        """Execute SQL and return rows as list of dicts."""
+    def execute_query_limited(
+        self, connection: object, sql: str, max_rows: int | None = None
+    ) -> tuple[list[dict], bool]:
+        """Execute SQL and return ``(rows, truncated)`` with at most max_rows rows."""
         cur = connection.cursor()
-        cur.execute(sql)
-        col_names = [d[0] for d in cur.description]
-        return [dict(zip(col_names, row)) for row in cur.fetchall()]
+        try:
+            cur.execute(sql)
+            rows, truncated = fetch_limited(cur, max_rows)
+            if truncated:
+                # Unread rows would make the next command on this connection fail.
+                try:
+                    connection.consume_results()
+                except Exception:
+                    pass
+            return rows, truncated
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    def execute_query(
+        self, connection: object, sql: str, max_rows: int | None = None
+    ) -> list[dict]:
+        """Execute SQL and return rows as list of dicts."""
+        return self.execute_query_limited(connection, sql, max_rows)[0]
 
     def close(self, connection: object) -> None:
-        """Return connection to the pool by closing it."""
-        try:
-            connection.close()
-        except Exception:
-            pass
+        """Return connection to the pool."""
+        self.release(connection)
 
     def test_connection(self) -> bool:
         """Return True if a test query succeeds; False on any error."""
         try:
-            conn = self.connect()
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
-            self.close(conn)
+            with self.connection() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.fetchall()
             return True
         except Exception:
             return False

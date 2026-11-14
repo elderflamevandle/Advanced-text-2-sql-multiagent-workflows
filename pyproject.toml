@@ -18,6 +18,7 @@ dependencies = [
     "langchain-ollama>=1.0.1",
     "plotly>=5.0.0,<7.0.0",
     "ragas>=0.2.0",
+    "sqlglot>=25.0.0",
 ]
 
 [project.optional-dependencies]
@@ -49,3 +50,7 @@ addopts = "-v --tb=short"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+# Explicit rule set so results do not change with the ruff version.
+select = ["E", "F"]

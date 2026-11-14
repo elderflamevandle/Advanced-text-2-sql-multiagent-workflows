@@ -90,6 +90,7 @@ async def correction_sql_node(state: AgentState) -> dict:
 
     # --- NORMAL LLM REWRITE PATH ---
     from langchain_core.messages import HumanMessage, SystemMessage
+    from llm.errors import LLMUnavailableError
     from llm.fallback import get_llm
 
     db_type = state.get("db_type", "sqlite") or "sqlite"
@@ -142,6 +143,10 @@ async def correction_sql_node(state: AgentState) -> dict:
             "error_log": None,  # CRITICAL: always clear to prevent routing loop
         }
 
+    except LLMUnavailableError:
+        # No provider answered: retrying the same SQL would only burn retries.
+        # Let the graph wrapper turn this into an llm_all_providers_failed error_log.
+        raise
     except Exception as exc:
         logger.warning(
             "correction_sql_node: LLM/parse failure (%s) — passthrough best effort", exc

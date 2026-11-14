@@ -22,7 +22,12 @@ retry:
 
 app:
   human_in_loop_enabled: true
-  max_correction_retries: 3
+  # Max SQL correction attempts after a failed execution (read by graph/conditions.py).
+  max_correction_retries: 2
+  # When true, the formatter sends the question, the SQL and up to 20 result rows to the
+  # LLM provider to write the answer. Set to false to keep result rows local; the answer
+  # is then a deterministic summary (row count + preview).
+  summarize_results_with_llm: true
   log_level: INFO
 
 safety:
