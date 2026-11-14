@@ -10,8 +10,34 @@ _PROJECT_ROOT = str(Path(__file__).parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import streamlit as st
-import yaml
+
+
+def _configure_local_defaults():
+    """Environment defaults for the Streamlit process (values already set always win).
+
+    The app is the local, single-user front end, and each browser session registers its
+    own connection in the connection registry (database/registry.py). The registry is
+    locked down by default because it also backs the multi-tenant API, so three settings
+    are relaxed here to keep the bundled demo working out of the box:
+
+    * T2S_ALLOW_FILE_DATABASES: the demo database is a local SQLite file.
+    * T2S_ALLOW_PRIVATE_HOSTS: local use usually means a database on localhost.
+    * T2S_METADATA_URL: connections of UI sessions are throwaway, so they are kept in an
+      in-memory store. Nothing is written to disk and no T2S_SECRET_KEY is needed.
+
+    Set these variables explicitly before exposing the app to other people.
+    """
+    from dotenv import load_dotenv
+    load_dotenv()  # .env first, so the defaults below never override it
+    os.environ.setdefault("T2S_ALLOW_FILE_DATABASES", "true")
+    os.environ.setdefault("T2S_ALLOW_PRIVATE_HOSTS", "true")
+    os.environ.setdefault("T2S_METADATA_URL", "sqlite://")
+
+
+_configure_local_defaults()
+
+import streamlit as st  # noqa: E402
+import yaml  # noqa: E402
 
 # --- Page config (must be first Streamlit call) ---
 st.set_page_config(
@@ -46,7 +72,12 @@ def init_session():
     defaults = {
         "messages": [],
         "thread_id": str(uuid.uuid4()),
-        "db_manager": None,
+        # Each browser session is its own tenant in the connection registry, so two
+        # sessions can never see or replace each other's database.
+        "tenant_id": "ui-" + uuid.uuid4().hex,
+        "connection_id": None,
+        "connection_db_type": None,
+        "db_manager": None,  # set only on the legacy path (registry unavailable)
         "session_tokens": 0,
         "session_cost": 0.0,
         "hitl_enabled": hitl_default,

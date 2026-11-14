@@ -136,6 +136,14 @@ class BaseConnector(ABC):
         else:
             self.release(conn, error=False)
 
+    def dispose(self) -> None:
+        """Close every pooled or shared connection held by this connector.
+
+        Safe to call more than once. The connector stays usable: the next
+        acquire()/connect() lazily opens new resources. The default is a no-op
+        for connectors that hold nothing between units of work.
+        """
+
     def cancel(self, connection: object) -> None:
         """Abort the statement currently running on ``connection``.
 

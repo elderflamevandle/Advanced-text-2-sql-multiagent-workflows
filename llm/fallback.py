@@ -175,25 +175,43 @@ def _cached(key: tuple, factory):
     return cache[key]
 
 
+def _resolve_api_key(provider: str, env_name: str) -> tuple[str, bool]:
+    """Return ``(api_key, request_scoped)`` for a provider.
+
+    A key set with ``llm.context.use_llm_credentials`` wins over the environment.
+    An empty string set there disables the provider for that request.
+    """
+    from llm.context import get_llm_credential
+    scoped = get_llm_credential(provider)
+    if scoped is not None:
+        return scoped.strip(), True
+    return os.environ.get(env_name, "").strip(), False
+
+
 def _build_groq(cfg: dict):
-    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    api_key, scoped = _resolve_api_key("groq", "GROQ_API_KEY")
     if not api_key:
-        logger.debug("get_llm: GROQ_API_KEY not set; skipping Groq")
+        logger.debug("get_llm: no Groq API key; skipping Groq")
         return None
     from llm.groq_client import _make_groq_llm
+    # The API key is part of the cache key: two tenants never share a client.
     key = ("groq", cfg.get("groq_model"), cfg.get("request_timeout"), api_key)
+    if scoped:
+        return _cached(key, lambda: _make_groq_llm(cfg, api_key=api_key))
     return _cached(key, lambda: _make_groq_llm(cfg))
 
 
 def _build_openai(cfg: dict, complexity: str):
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key, scoped = _resolve_api_key("openai", "OPENAI_API_KEY")
     if not api_key:
-        logger.debug("get_llm: OPENAI_API_KEY not set; skipping OpenAI")
+        logger.debug("get_llm: no OpenAI API key; skipping OpenAI")
         return None
     from llm.openai_client import _make_openai_llm
     tier = "complex" if complexity == "complex" else "simple"
     model = cfg.get("openai_model_complex" if tier == "complex" else "openai_model_default")
     key = ("openai", tier, model, cfg.get("request_timeout"), api_key)
+    if scoped:
+        return _cached(key, lambda: _make_openai_llm(cfg, complexity=tier, api_key=api_key))
     return _cached(key, lambda: _make_openai_llm(cfg, complexity=tier))
 
 

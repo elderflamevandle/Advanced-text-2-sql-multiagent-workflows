@@ -318,3 +318,34 @@ class TestHitlNodeResumption:
 
         assert result == {"approval_status": "approved"}
         mock_interrupt.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Reviewer decisions returned by interrupt() on resume
+# ---------------------------------------------------------------------------
+
+def _decide(decision):
+    from agents.nodes.hitl import _apply_decision
+
+    return _apply_decision(decision, {"db_type": "sqlite", "generated_sql": "SELECT 1"})
+
+
+def test_decision_approved_runs_original_sql():
+    assert _decide({"action": "approved", "sql": "SELECT 1"}) == {"approval_status": "approved"}
+    assert _decide("approve") == {"approval_status": "approved"}
+
+
+def test_decision_edited_replaces_sql():
+    result = _decide({"action": "edited", "sql": "  SELECT 2  "})
+    assert result == {"approval_status": "approved", "generated_sql": "SELECT 2"}
+
+
+def test_decision_rejected_sets_error_and_never_approves():
+    result = _decide({"action": "rejected", "sql": "SELECT 1"})
+    assert result["approval_status"] == "rejected"
+    assert result["error_log"]["error_type"] == "user_rejected"
+
+
+def test_decision_unrecognised_or_empty_edit_is_a_rejection():
+    for decision in (None, "", {"action": "maybe"}, {"action": "edited", "sql": "  "}, 42):
+        assert _decide(decision)["approval_status"] == "rejected"

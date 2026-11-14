@@ -67,3 +67,16 @@ def sample_table_name() -> str:
 def sample_column_info() -> ColumnInfo:
     """Returns a ColumnInfo dict for the Total column."""
     return ColumnInfo(name="Total", type="NUMERIC", nullable=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_vector_singletons():
+    """get_retriever()/get_embedder() are process-wide: start every test without them."""
+    import vector.embeddings as embeddings
+    import vector.retriever as retriever
+
+    retriever.reset_retrievers()
+    embeddings.reset_embedder()
+    yield
+    retriever.reset_retrievers()
+    embeddings.reset_embedder()

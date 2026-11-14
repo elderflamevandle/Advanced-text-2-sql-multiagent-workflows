@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -54,6 +55,9 @@ class EmbeddingGenerator:
 
     MODEL_NAME = "BAAI/bge-large-en-v1.5"
 
+    _model = None
+    _load_lock = threading.Lock()
+
     def __init__(self) -> None:
         self._model = None
 
@@ -67,9 +71,12 @@ class EmbeddingGenerator:
     def _get_model(self):
         """Lazily load the SentenceTransformer model on first call."""
         if self._model is None:
-            logger.info("Loading BGE model (first run may download ~600MB)...")
-            from sentence_transformers import SentenceTransformer  # lazy import
-            self._model = SentenceTransformer(self.MODEL_NAME)
+            # The lock stops two concurrent first requests from loading the model twice.
+            with self._load_lock:
+                if self._model is None:
+                    logger.info("Loading BGE model (first run may download ~600MB)...")
+                    from sentence_transformers import SentenceTransformer  # lazy import
+                    self._model = SentenceTransformer(self.MODEL_NAME)
         return self._model
 
     def embed_query(self, query: str) -> list[float]:
@@ -107,3 +114,28 @@ class EmbeddingGenerator:
             )
             results.extend(vec.tolist() for vec in encoded)
         return results
+
+
+# ---------------------------------------------------------------------------
+# Process-wide embedder: the model is ~1.3 GB in memory, load it once
+# ---------------------------------------------------------------------------
+
+_embedder: EmbeddingGenerator | None = None
+_embedder_lock = threading.Lock()
+
+
+def get_embedder() -> EmbeddingGenerator:
+    """Return the shared EmbeddingGenerator (created on first use, model loaded lazily)."""
+    global _embedder
+    if _embedder is None:
+        with _embedder_lock:
+            if _embedder is None:
+                _embedder = EmbeddingGenerator()
+    return _embedder
+
+
+def reset_embedder() -> None:
+    """Drop the shared embedder (tests)."""
+    global _embedder
+    with _embedder_lock:
+        _embedder = None

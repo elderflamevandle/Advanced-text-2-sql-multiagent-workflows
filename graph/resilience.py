@@ -19,6 +19,9 @@ import functools
 import logging
 import sys
 
+from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables.config import var_child_runnable_config
+
 from llm.errors import LLMUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -35,14 +38,21 @@ def resilient_node(fn, name: str | None = None):
     node_name = name or getattr(fn, "__name__", "node")
 
     @functools.wraps(fn)
-    async def wrapper(state):
+    async def wrapper(state, config: RunnableConfig = None):
         local_state = dict(state)
         seen = len(local_state.get("usage_metadata") or [])
+        # Python 3.10 does not propagate the runnable config into async nodes, so
+        # langgraph.types.interrupt() (used by the approval node) fails with "Called
+        # get_config outside of a runnable context". Publish the config explicitly.
+        token = var_child_runnable_config.set(config) if config is not None else None
         try:
             result = await _resolve(fn)(local_state)
         except LLMUnavailableError as exc:
             logger.error("%s: LLM unavailable: %s", node_name, exc)
             result = {"error_log": exc.to_error_log(dialect=local_state.get("db_type"))}
+        finally:
+            if token is not None:
+                var_child_runnable_config.reset(token)
 
         update = dict(result) if isinstance(result, dict) else {}
         new_entries = list((local_state.get("usage_metadata") or [])[seen:])
@@ -53,5 +63,8 @@ def resilient_node(fn, name: str | None = None):
             update["usage_metadata"] = new_entries
         return update
 
+    # functools.wraps points inspect.signature at fn (state only); LangGraph would then
+    # not pass config. Drop the link so the wrapper's own (state, config) signature is seen.
+    del wrapper.__wrapped__
     wrapper.__wrapped_node__ = fn
     return wrapper

@@ -12,6 +12,8 @@ EXPECTED_FIELDS = {
     "user_query",
     "resolved_query",
     "db_type",
+    "tenant_id",
+    "connection_id",
     "query_type",
     "schema",
     "relevant_tables",
@@ -40,7 +42,7 @@ def test_agentstate_has_required_fields():
         f"Field mismatch. Missing: {EXPECTED_FIELDS - set(hints.keys())}, "
         f"Extra: {set(hints.keys()) - EXPECTED_FIELDS}"
     )
-    assert len(hints) == 19
+    assert len(hints) == 21
     assert "db_manager" not in hints
 
 

@@ -287,3 +287,13 @@ class PostgreSQLConnector(BaseConnector):
             return True
         except Exception:
             return False
+
+    def dispose(self) -> None:
+        """Close every connection in the pool. A later connect() builds a new pool."""
+        with self._pool_lock:
+            pool, self._pool = self._pool, None
+        if pool is not None:
+            try:
+                pool.closeall()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("PostgreSQL: error while closing pool: %s", type(exc).__name__)

@@ -159,3 +159,102 @@ def test_no_fake_quality_score_is_rendered():
         chat._render_assistant_extras({"final_answer": "x", "db_results": None}, msg_key="k")
     assert st_mock.progress.call_count == 0
     assert st_mock.metric.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Registry-backed state and request-scoped LLM keys
+# ---------------------------------------------------------------------------
+
+def test_initial_state_uses_session_connection_from_registry(file_registry, demo_db):
+    from streamlit_app.components.chat import _build_initial_state
+    from streamlit_app.components.sidebar import _do_connect
+
+    session = {"sidebar_db_type": "SQLite"}
+    with patch("streamlit.session_state", session):
+        _do_connect("sqlite", {"db_path": demo_db("a", ["Artist", "Album"])})
+        session["sidebar_db_type"] = "PostgreSQL"      # selectbox changed, not reconnected
+        state = _build_initial_state("list artists")
+
+    assert state["tenant_id"] == session["tenant_id"]
+    assert state["connection_id"] == session["connection_id"]
+    assert set(state["schema"]) == {"Artist", "Album"}
+    assert state["db_type"] == "sqlite", "dialect of the connected database"
+    # Identifiers only: the state is checkpointed.
+    import json
+    json.dumps({k: v for k, v in state.items() if k != "schema"})
+    assert "db_manager" not in state
+
+
+def test_initial_state_of_another_session_never_sees_the_connection(file_registry, demo_db):
+    from streamlit_app.components.chat import _build_initial_state
+    from streamlit_app.components.sidebar import _do_connect
+
+    alice, bob = {}, {"tenant_id": "ui-bob"}
+    with patch("streamlit.session_state", alice):
+        _do_connect("sqlite", {"db_path": demo_db("a", ["Artist"])})
+    with patch("streamlit.session_state", bob):
+        state = _build_initial_state("list artists")      # bob never connected
+        bob["connection_id"] = alice["connection_id"]     # ...and cannot borrow alice's
+        stolen = _build_initial_state("list artists")
+
+    assert state["connection_id"] is None and state["tenant_id"] is None
+    assert state["schema"] is None
+    assert stolen["schema"] is None
+
+
+def test_initial_state_legacy_path_uses_active_manager(mock_db_manager):
+    from streamlit_app.components.chat import _build_initial_state
+
+    session = {"sidebar_db_type": "DuckDB", "tenant_id": "ui-x", "connection_id": None}
+    with patch("streamlit.session_state", session), \
+         patch("database.manager.get_active_manager", return_value=mock_db_manager):
+        state = _build_initial_state("q")
+    assert state["connection_id"] is None and state["tenant_id"] is None
+    assert set(state["schema"]) == {"Artist", "Album", "Track"}
+    assert state["db_type"] == "duckdb"
+
+
+def test_llm_keys_are_scoped_to_the_run_and_not_written_to_environ(monkeypatch):
+    """Sidebar keys reach the LLM layer through contextvars, never through os.environ."""
+    import os
+    import streamlit_app.components.chat as chat
+    from llm.context import get_llm_credential
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    seen = {}
+
+    class FakeGraph:
+        async def astream(self, state, config=None, stream_mode=None):
+            seen["groq"] = get_llm_credential("groq")
+            seen["openai"] = get_llm_credential("openai")
+            yield {"gatekeeper": {}}
+
+        async def aget_state(self, config):
+            from types import SimpleNamespace
+            return SimpleNamespace(values={"final_answer": "ok"})
+
+    session = {"groq_api_key": "gsk-session-a", "openai_api_key": ""}
+    with patch("streamlit.session_state", session), \
+         patch("graph.builder.compiled_graph", FakeGraph(), create=True):
+        final = chat._run_graph_streaming({}, {"configurable": {"thread_id": "t"}}, MagicMock())
+
+    assert final == {"final_answer": "ok"}
+    assert seen == {"groq": "gsk-session-a", "openai": None}   # empty field -> env fallback
+    assert "GROQ_API_KEY" not in os.environ
+    assert get_llm_credential("groq") is None, "nothing leaks out of the run"
+
+
+def test_llm_keys_fall_back_to_environ_without_llm_context(monkeypatch):
+    import contextlib
+    import os
+    import sys
+    import streamlit_app.components.chat as chat
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    session = {"groq_api_key": "gsk-legacy"}
+    with patch("streamlit.session_state", session), \
+         patch.dict(sys.modules, {"llm.context": None}):     # import raises ImportError
+        credentials = chat._llm_credentials()
+        assert isinstance(credentials, contextlib.nullcontext)
+        assert os.environ["GROQ_API_KEY"] == "gsk-legacy"

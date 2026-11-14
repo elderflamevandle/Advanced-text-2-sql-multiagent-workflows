@@ -227,6 +227,25 @@ def _build_error(
 # Executor node
 # ---------------------------------------------------------------------------
 
+def _resolve_tenant_manager(tenant_id: str | None, connection_id: str):
+    """Return the tenant's DatabaseManager, or None when it cannot be resolved.
+
+    A missing connection and one owned by another tenant are indistinguishable
+    (both ``ConnectionNotFound``), and every failure maps to the same
+    ``no_connection`` error so nothing about other tenants leaks to the caller.
+    """
+    from database.registry import ConnectionNotFound, get_registry  # noqa: PLC0415
+
+    try:
+        return get_registry().get_manager(tenant_id, connection_id)
+    except ConnectionNotFound:
+        logger.warning("executor_node: connection not found for this tenant")
+    except Exception as exc:  # noqa: BLE001 - never surface credential/driver details
+        logger.error("executor_node: could not open tenant connection (%s)",
+                     type(exc).__name__)
+    return None
+
+
 async def executor_node(state: AgentState) -> dict:
     """Execute SQL safely via DatabaseManager and capture results.
 
@@ -249,8 +268,16 @@ async def executor_node(state: AgentState) -> dict:
 
     sql: str | None = state.get("generated_sql")
     db_type: str = state.get("db_type", "unknown")
-    from database.manager import get_active_manager
-    db_manager = get_active_manager()
+    connection_id = state.get("connection_id")
+    if connection_id:
+        # Service path: the tenant's own database, resolved through the registry.
+        db_manager = await asyncio.to_thread(
+            _resolve_tenant_manager, state.get("tenant_id"), connection_id
+        )
+    else:
+        # Legacy single-user path (Streamlit sidebar).
+        from database.manager import get_active_manager
+        db_manager = get_active_manager()
 
     # ------------------------------------------------------------------
     # 1. Null checks

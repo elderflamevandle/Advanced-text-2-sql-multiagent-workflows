@@ -1,3 +1,6 @@
+"""Graph assembly. Importing this module builds nothing: see get_compiled_graph()."""
+import threading
+
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from graph.state import AgentState
@@ -36,7 +39,13 @@ _NODES = {
 }
 
 
-def build_graph():
+def build_graph(checkpointer=None):
+    """Compile the pipeline graph.
+
+    ``checkpointer`` is any LangGraph checkpointer, normally the one yielded by
+    ``graph.checkpointing.open_checkpointer()``. ``None`` gives a fresh in-process
+    MemorySaver, which is what the Streamlit app and the tests use.
+    """
     wf = StateGraph(AgentState)
 
     # Every node is wrapped: LLM outages become an error_log update and usage entries
@@ -86,7 +95,33 @@ def build_graph():
     wf.add_edge("formatter", "evaluator")
     wf.add_edge("evaluator", END)
 
-    return wf.compile(checkpointer=MemorySaver())
+    return wf.compile(checkpointer=checkpointer if checkpointer is not None else MemorySaver())
 
 
-compiled_graph = build_graph()
+_compiled_graph = None
+_compiled_lock = threading.Lock()
+
+
+def get_compiled_graph():
+    """Process-wide default graph (MemorySaver), built on first use."""
+    global _compiled_graph
+    if _compiled_graph is None:
+        with _compiled_lock:
+            if _compiled_graph is None:
+                _compiled_graph = build_graph()
+    return _compiled_graph
+
+
+def reset_compiled_graph() -> None:
+    """Drop the default graph so the next access builds a new one (tests)."""
+    global _compiled_graph
+    with _compiled_lock:
+        _compiled_graph = None
+
+
+def __getattr__(name: str):
+    # ``from graph.builder import compiled_graph`` keeps working, without building the
+    # graph as a side effect of importing this module.
+    if name == "compiled_graph":
+        return get_compiled_graph()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

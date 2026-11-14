@@ -167,7 +167,7 @@ class TestRetrieveTwoStage:
             ]
         }
         retriever._index.query.side_effect = [stage1_result, stage2_result]
-        retriever._schema_cache = sample_schema
+        retriever.register_schema("test-ns", sample_schema)
 
         result = retriever.retrieve_tables("show me invoices", "test-ns", top_k=5)
 
@@ -189,7 +189,7 @@ class TestRetrieveTwoStage:
         }
         stage2_result = {"matches": []}
         retriever._index.query.side_effect = [stage1_result, stage2_result]
-        retriever._schema_cache = sample_schema
+        retriever.register_schema("test-ns", sample_schema)
 
         result = retriever.retrieve_tables("invoice totals by customer", "test-ns")
         assert "Invoice" in result["tables"]
@@ -206,7 +206,7 @@ class TestRetrieveTwoStage:
         }
         stage2_result = {"matches": []}
         retriever._index.query.side_effect = [stage1_result, stage2_result]
-        retriever._schema_cache = sample_schema
+        retriever.register_schema("test-ns", sample_schema)
 
         result = retriever.retrieve_tables("invoices", "test-ns")
         assert len(result["join_hints"]) > 0

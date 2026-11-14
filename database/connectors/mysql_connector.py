@@ -273,3 +273,17 @@ class MySQLConnector(BaseConnector):
             return True
         except Exception:
             return False
+
+    def dispose(self) -> None:
+        """Close every idle connection in the pool. A later connect() builds a new pool."""
+        with self._pool_lock:
+            pool, self._pool = self._pool, None
+        if pool is None:
+            return
+        closer = getattr(pool, "_remove_connections", None)
+        if closer is None:
+            return
+        try:
+            closer()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MySQL: error while closing pool: %s", type(exc).__name__)

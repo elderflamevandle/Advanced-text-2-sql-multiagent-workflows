@@ -1,4 +1,5 @@
 """Shared fixtures for UI tests."""
+import os
 import sys
 from pathlib import Path
 
@@ -82,3 +83,64 @@ def mock_db_manager():
         "Track": {"columns": ["TrackId", "Name", "AlbumId"]},
     }
     return mgr
+
+
+_ENV_VARS = (
+    "T2S_ALLOW_FILE_DATABASES", "T2S_ALLOW_PRIVATE_HOSTS", "T2S_METADATA_URL",
+    "T2S_SECRET_KEY", "T2S_FILE_DATABASE_ROOT",
+    "GROQ_API_KEY", "OPENAI_API_KEY", "PINECONE_API_KEY",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_service_env():
+    """Keep UI tests from leaking process state into the rest of the suite.
+
+    Importing streamlit_app.app sets T2S_* defaults in os.environ, and connecting builds
+    the process-wide registry. The metadata store is forced in-memory so no test can
+    create the default .t2s/metadata.db inside the repository.
+    """
+    from database import metadata, registry
+
+    saved = {name: os.environ.get(name) for name in _ENV_VARS}
+    os.environ["T2S_METADATA_URL"] = "sqlite://"
+    os.environ.pop("T2S_SECRET_KEY", None)
+    registry.set_registry(None)
+    metadata.reset_engine()
+    yield
+    registry.set_registry(None)
+    metadata.reset_engine()
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+@pytest.fixture
+def demo_db(tmp_path):
+    """Factory for small SQLite files: demo_db("a", ["Artist", "Album"]) -> path."""
+    import sqlite3
+
+    def make(name: str, tables: list[str]) -> str:
+        path = tmp_path / f"{name}.db"
+        conn = sqlite3.connect(path)
+        for table in tables:
+            conn.execute(f"CREATE TABLE {table} (Id INTEGER PRIMARY KEY, Name TEXT)")
+            conn.execute(f"INSERT INTO {table} (Name) VALUES ('{name}-{table}')")
+        conn.commit()
+        conn.close()
+        return str(path)
+
+    return make
+
+
+@pytest.fixture
+def file_registry(monkeypatch):
+    """A real ConnectionRegistry on an in-memory metadata store, file databases allowed."""
+    from database import registry
+
+    monkeypatch.setenv("T2S_ALLOW_FILE_DATABASES", "true")
+    reg = registry.get_registry()
+    yield reg
+    reg.close_all()

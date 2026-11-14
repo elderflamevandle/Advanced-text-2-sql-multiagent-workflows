@@ -231,3 +231,14 @@ class DuckDBConnector(BaseConnector):
     def close(self, connection: duckdb.DuckDBPyConnection) -> None:
         """DuckDB cursors are lightweight — let GC handle them."""
         pass
+
+    def dispose(self) -> None:
+        """Close the parent connection (releases the file handle) and forget cursors."""
+        with self._conn_lock:
+            parent, self._parent_conn = self._parent_conn, None
+            self._local = threading.local()
+        if parent is not None:
+            try:
+                parent.close()
+            except Exception:
+                pass

@@ -1,0 +1,68 @@
+# Text-to-SQL service: API + PostgreSQL (tenants, API keys, connections, checkpoints) + Redis
+# (rate limiting, cache).
+#
+#   cp .env.example .env      # then fill in T2S_SECRET_KEY, T2S_ADMIN_API_KEY, POSTGRES_PASSWORD
+#   docker compose up --build
+#
+# Secrets come from .env, which is git-ignored. Nothing secret belongs in this file.
+# POSTGRES_PASSWORD is placed inside connection URLs, so use URL-safe characters
+# (for example the output of `openssl rand -hex 24`).
+
+name: text2sql
+
+services:
+  api:
+    build:
+      context: .
+    image: text2sql-api:local
+    restart: unless-stopped
+    # LLM provider keys and the T2S_* secrets. The values under `environment` win.
+    env_file:
+      - .env
+    environment:
+      T2S_SECRET_KEY: ${T2S_SECRET_KEY:?Set T2S_SECRET_KEY in .env (see .env.example)}
+      T2S_ADMIN_API_KEY: ${T2S_ADMIN_API_KEY:?Set T2S_ADMIN_API_KEY in .env (see .env.example)}
+      T2S_METADATA_URL: postgresql+psycopg://t2s:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/t2s
+      T2S_CHECKPOINT_URL: postgresql://t2s:${POSTGRES_PASSWORD}@postgres:5432/t2s
+      T2S_REDIS_URL: redis://redis:6379/0
+      T2S_RATE_LIMIT_PER_MINUTE: ${T2S_RATE_LIMIT_PER_MINUTE:-60}
+      T2S_MAX_CONCURRENT_QUERIES: ${T2S_MAX_CONCURRENT_QUERIES:-8}
+      # Tenants register network databases only. Keep this false on a shared deployment.
+      T2S_ALLOW_FILE_DATABASES: ${T2S_ALLOW_FILE_DATABASES:-false}
+    ports:
+      - "${T2S_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: t2s
+      POSTGRES_DB: t2s
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U t2s -d t2s"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # Rate-limit counters and cache entries only: nothing here needs to survive a restart.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

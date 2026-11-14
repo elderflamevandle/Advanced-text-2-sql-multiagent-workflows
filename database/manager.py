@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -170,6 +171,11 @@ class DatabaseManager:
         self.db_type: str = db_type
         self._connector: BaseConnector = _get_connector(db_type, **kwargs)
         self._schema_cache: dict | None = None
+        # Lifecycle bookkeeping (see dispose()). Created lazily by _lifecycle()
+        # as well, so objects built without __init__ in tests keep working.
+        self._life_lock = threading.Lock()
+        self._in_flight = 0
+        self._dispose_pending = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -177,14 +183,81 @@ class DatabaseManager:
 
     def test_connection(self) -> bool:
         """Delegate to the underlying connector's test_connection()."""
-        return self._connector.test_connection()
+        with self._busy():
+            return self._connector.test_connection()
 
     def get_schema(self) -> dict:
         """Return the schema dict, fetching and caching it on first call."""
         if self._schema_cache is None:
-            with self._connector.connection() as conn:
+            with self._busy(), self._connector.connection() as conn:
                 self._schema_cache = self._connector.get_schema(conn)
         return self._schema_cache
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def _lifecycle(self) -> threading.Lock:
+        lock = self.__dict__.get("_life_lock")
+        if lock is None:
+            lock = self.__dict__.setdefault("_life_lock", threading.Lock())
+            self.__dict__.setdefault("_in_flight", 0)
+            self.__dict__.setdefault("_dispose_pending", False)
+        return lock
+
+    @contextmanager
+    def _busy(self):
+        """Mark one unit of work as in flight so the pool is not closed under it."""
+        lock = self._lifecycle()
+        with lock:
+            self._in_flight += 1
+        try:
+            yield
+        finally:
+            with lock:
+                self._in_flight -= 1
+                run_dispose = self._in_flight == 0 and self._dispose_pending
+                if run_dispose:
+                    self._dispose_pending = False
+            if run_dispose:
+                self._dispose_connector()
+
+    @property
+    def in_use(self) -> bool:
+        """True while a query, schema read or connection test is running."""
+        with self._lifecycle():
+            return self._in_flight > 0
+
+    def _dispose_connector(self) -> None:
+        dispose = getattr(self._connector, "dispose", None)
+        if dispose is None:
+            return
+        try:
+            dispose()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not dispose %s connector: %s", self.db_type,
+                           type(exc).__name__)
+
+    def dispose_if_idle(self) -> bool:
+        """Close pooled connections unless work is in flight. Returns True if closed."""
+        with self._lifecycle():
+            if self._in_flight > 0:
+                return False
+            # Disposing under the lock means no unit of work can start half-way.
+            self._dispose_connector()
+            return True
+
+    def dispose(self) -> None:
+        """Close pooled connections; deferred until running work has finished.
+
+        The manager stays usable afterwards: connectors reopen lazily on the
+        next call. The schema cache is kept.
+        """
+        with self._lifecycle():
+            if self._in_flight > 0:
+                self._dispose_pending = True
+                return
+            self._dispose_connector()
 
     def refresh_schema(self) -> dict:
         """Clear the schema cache and return a freshly fetched dict."""
@@ -210,7 +283,7 @@ class DatabaseManager:
         The connection is always released (returned to the pool / closed),
         also when the query fails or is cancelled.
         """
-        with self._connector.connection() as conn:
+        with self._busy(), self._connector.connection() as conn:
             watchdog = (
                 _Watchdog(self._connector, conn, timeout)
                 if timeout is not None and timeout > 0

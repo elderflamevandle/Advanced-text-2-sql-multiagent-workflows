@@ -20,6 +20,10 @@ class AgentState(TypedDict):
     user_query: str
     resolved_query: Optional[str]
     db_type: str
+    # Tenant-scoped database handle (see database/registry.py). Identifiers only:
+    # never credentials or manager objects, because state is checkpointed.
+    tenant_id: Optional[str]
+    connection_id: Optional[str]
     query_type: Optional[str]
     schema: Optional[dict]
     relevant_tables: Optional[list]

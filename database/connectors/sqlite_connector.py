@@ -186,3 +186,13 @@ class SQLiteConnector(BaseConnector):
             pass
         if connection is self._conn:
             self._conn = None
+
+    def dispose(self) -> None:
+        """Close the shared connection, if open. Dedicated ones close on release()."""
+        with self._lock:
+            conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
