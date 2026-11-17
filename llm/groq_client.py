@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 def _make_groq_llm(cfg: dict, api_key: str | None = None):
     """Factory: returns a ChatGroq instance from config dict. Lazy import."""
     from langchain_groq import ChatGroq
-    model = cfg.get("groq_model", "llama-3.3-70b-versatile")
+    model = cfg.get("groq_model", "openai/gpt-oss-120b")
     timeout = cfg.get("request_timeout", 60)
     logger.debug("_make_groq_llm: model=%s timeout=%s", model, timeout)
     kwargs = {"api_key": api_key} if api_key else {}  # None -> GROQ_API_KEY from the env
