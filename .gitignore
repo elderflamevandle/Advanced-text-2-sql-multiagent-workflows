@@ -42,3 +42,6 @@ Thumbs.db
 
 # Project-specific
 *.log
+
+# Local service state (default metadata store and SQLite checkpoints)
+.t2s/

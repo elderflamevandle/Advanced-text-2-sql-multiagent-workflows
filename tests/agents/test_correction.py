@@ -239,3 +239,20 @@ def test_wrong_table_self_corrects():
     with _patch_get_llm(mock_llm_sql):
         sql_result = asyncio.run(cs_mod.correction_sql_node(state))
     assert sql_result.get("generated_sql") == corrected_sql
+
+
+def test_correction_sql_node_does_not_swallow_llm_outage():
+    """An LLM outage must propagate (the graph wrapper ends the run) instead of
+    silently retrying the same SQL and burning a retry."""
+    import agents.nodes.correction_sql as cs_mod
+    from llm.errors import LLMUnavailableError
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(side_effect=LLMUnavailableError("all providers failed"))
+    state = make_agent_state()
+    state["generated_sql"] = "SELEC 1"
+    state["error_log"] = {"error_type": "syntax_error", "message": "near SELEC"}
+    state["correction_plan"] = {"correction_steps": ["fix keyword"]}
+
+    with _patch_get_llm(mock_llm), pytest.raises(LLMUnavailableError):
+        asyncio.run(cs_mod.correction_sql_node(state))

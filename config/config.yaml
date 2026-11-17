@@ -7,7 +7,7 @@ database:
 llm:
   primary_provider: groq
   fallback_provider: openai
-  groq_model: llama-3.3-70b-versatile
+  groq_model: openai/gpt-oss-120b
   openai_model_default: gpt-4o-mini
   openai_model_complex: gpt-4o
   ollama_model: qwen3:8b
@@ -22,8 +22,27 @@ retry:
 
 app:
   human_in_loop_enabled: true
-  max_correction_retries: 3
+  # Max SQL correction attempts after a failed execution (read by graph/conditions.py).
+  max_correction_retries: 2
+  # When true, the formatter sends the question, the SQL and up to 20 result rows to the
+  # LLM provider to write the answer. Set to false to keep result rows local; the answer
+  # is then a deterministic summary (row count + preview).
+  summarize_results_with_llm: true
+  # When true, the planner may answer with one clarifying question instead of guessing
+  # between materially different readings of the question (no extra LLM call).
+  clarification_enabled: true
   log_level: INFO
+
+# Schema catalog (catalog/): table and column descriptions, statistics and relationships
+# built once per connection and used to pick the tables for each question.
+catalog:
+  # Start a build right after a connection is registered through the API.
+  auto_build: true
+  # Let the LLM write table and column descriptions (names, types and non-sensitive sample
+  # values are sent; sample values of sensitive columns never are).
+  describe_with_llm: true
+  max_tables_described: 300
+  build_workers: 2
 
 safety:
   enabled: true

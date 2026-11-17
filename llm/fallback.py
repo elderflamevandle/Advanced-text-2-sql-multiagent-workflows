@@ -1,23 +1,24 @@
 """LLM fallback chain: Groq -> OpenAI -> Ollama with per-call token/cost tracking."""
 import asyncio
 import logging
-import yaml
+import os
+import weakref
+
+from llm.errors import LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
-
-def _groq_exc():
-    """Return the tuple of Groq exception classes (lazy import)."""
-    import groq
-    return (groq.RateLimitError, groq.APITimeoutError,
-            groq.APIConnectionError, groq.InternalServerError)
+# Pause between providers so a rate-limited account is not hammered. Tests set this to 0.
+RETRY_DELAY_SECONDS = 1.0
 
 
-def _openai_exc():
-    """Return the tuple of OpenAI exception classes (lazy import)."""
-    import openai
-    return (openai.RateLimitError, openai.APITimeoutError,
-            openai.APIConnectionError, openai.InternalServerError)
+def _model_name(llm) -> str:
+    """Return the configured model name of a LangChain chat model as a plain string."""
+    for attr in ("model_name", "model"):
+        value = getattr(llm, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
 
 
 class FallbackClient:
@@ -25,135 +26,245 @@ class FallbackClient:
 
     Exposes ainvoke() and astream() matching the LangChain Runnable interface
     so agent nodes use it as a drop-in for ChatGroq.
+
+    A provider passed as None (for example because its API key is missing) is skipped.
+    When no provider can serve the request, LLMUnavailableError is raised.
     """
 
-    def __init__(self, groq_llm, openai_llm, ollama_llm, tracker, node_name: str):
-        self._providers = [
+    def __init__(self, groq_llm, openai_llm, ollama_llm, tracker, node_name: str,
+                 state: dict | None = None):
+        candidates = [
             ("groq", groq_llm),
             ("openai", openai_llm),
             ("ollama", ollama_llm),
         ]
+        self._providers = [(name, llm) for name, llm in candidates if llm is not None]
         self._tracker = tracker
         self._node_name = node_name
+        # State the client was created for (get_llm(node, state)). Usage is recorded on it
+        # when a call does not pass state= explicitly, which most nodes do not.
+        self._state = state
+
+    @property
+    def provider_names(self) -> list[str]:
+        return [name for name, _ in self._providers]
+
+    def _record(self, provider_name: str, llm, usage: dict | None, state: dict | None) -> None:
+        usage = usage if isinstance(usage, dict) else {}
+        self._tracker.record(
+            provider=provider_name,
+            model=_model_name(llm),
+            node_name=self._node_name,
+            input_tokens=usage.get("input_tokens", 0) or 0,
+            output_tokens=usage.get("output_tokens", 0) or 0,
+            state=state if state is not None else self._state,
+        )
+
+    def _unavailable(self, last_exc: Exception | None) -> LLMUnavailableError:
+        if not self._providers:
+            message = "No LLM provider is configured (no API key set and Ollama unavailable)."
+        else:
+            message = (
+                f"All LLM providers failed ({', '.join(self.provider_names)}). "
+                f"Last error: {type(last_exc).__name__}: {last_exc}"
+            )
+        logger.error("FallbackClient: node=%s %s", self._node_name, message)
+        return LLMUnavailableError(message, last_error=last_exc,
+                                   providers_tried=self.provider_names)
 
     async def ainvoke(self, messages: list, state: dict | None = None):
-        """Try each provider in order. Return structured error dict on all-fail (never raises)."""
-        last_exc = None
-        for provider_name, llm in self._providers:
+        """Try each provider in order and return the first response.
+
+        Raises:
+            LLMUnavailableError: every provider failed, or none is configured.
+        """
+        last_exc: Exception | None = None
+        last_index = len(self._providers) - 1
+        for index, (provider_name, llm) in enumerate(self._providers):
             try:
                 response = await llm.ainvoke(messages)
-                usage = response.usage_metadata or {}
-                self._tracker.record(
-                    provider=provider_name,
-                    model=getattr(llm, "model_name", getattr(llm, "model", "unknown")),
-                    node_name=self._node_name,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
-                    state=state,
-                )
-                if provider_name != "groq":
-                    logger.warning("FallbackClient: served by %s (Groq unavailable)", provider_name)
-                else:
-                    logger.info("FallbackClient: served by groq node=%s", self._node_name)
-                return response
-            except _groq_exc() as exc:
-                logger.warning("FallbackClient: Groq failed (%s) — trying OpenAI", type(exc).__name__)
+            except Exception as exc:  # noqa: BLE001 - any provider failure triggers fallback
+                logger.warning("FallbackClient: %s failed (%s: %s); trying next provider",
+                               provider_name, type(exc).__name__, exc)
                 last_exc = exc
-                await asyncio.sleep(1)
-            except _openai_exc() as exc:
-                logger.warning("FallbackClient: OpenAI failed (%s) — trying Ollama", type(exc).__name__)
-                last_exc = exc
-                await asyncio.sleep(1)
-            except Exception as exc:
-                logger.warning("FallbackClient: %s failed (%s) — trying next provider",
-                               provider_name, type(exc).__name__)
-                last_exc = exc
-                await asyncio.sleep(1)
-
-        logger.error("FallbackClient: all 3 providers failed. last_error=%s", last_exc)
-        return {
-            "error_type": "llm_all_providers_failed",
-            "message": f"All LLM providers exhausted: {last_exc}",
-            "dialect": None,
-            "failed_sql": None,
-            "hint": "Check GROQ_API_KEY, OPENAI_API_KEY, and Ollama server status.",
-        }
+                if index < last_index and RETRY_DELAY_SECONDS > 0:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                continue
+            self._record(provider_name, llm, getattr(response, "usage_metadata", None), state)
+            if index > 0:
+                logger.warning("FallbackClient: served by %s (earlier providers failed) node=%s",
+                               provider_name, self._node_name)
+            else:
+                logger.info("FallbackClient: served by %s node=%s",
+                            provider_name, self._node_name)
+            return response
+        raise self._unavailable(last_exc)
 
     async def astream(self, messages: list, state: dict | None = None):
-        """Stream token chunks. Tries each provider; falls back to next on failure.
+        """Stream str chunks, falling back to the next provider on failure.
 
-        Yields str chunks. After the last chunk, records usage via tracker.
-        Uses llm.astream() for true token-level streaming when available.
-        Falls back to ainvoke() wrapping if provider doesn't support astream.
+        A provider is only abandoned if it fails before yielding anything; a failure after
+        partial output is raised, because replaying on another provider would duplicate text.
+
+        Raises:
+            LLMUnavailableError: every provider failed, or none is configured.
         """
-        last_exc = None
+        last_exc: Exception | None = None
         for provider_name, llm in self._providers:
+            yielded = False
+            final_chunk = None
             try:
-                full_content = ""
-                final_chunk = None
                 async for chunk in llm.astream(messages):
                     text = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    if text:
-                        yield text
-                        full_content += text
                     final_chunk = chunk
-                # Record usage from final chunk metadata
-                usage = {}
-                if final_chunk is not None and hasattr(final_chunk, "usage_metadata"):
-                    usage = final_chunk.usage_metadata or {}
-                self._tracker.record(
-                    provider=provider_name,
-                    model=getattr(llm, "model_name", getattr(llm, "model", "unknown")),
-                    node_name=self._node_name,
-                    input_tokens=usage.get("input_tokens", 0),
-                    output_tokens=usage.get("output_tokens", 0),
-                    state=state,
-                )
-                if provider_name != "groq":
-                    logger.warning("FallbackClient.astream: served by %s", provider_name)
-                return  # Success — stop provider loop
-            except Exception as exc:
-                logger.warning("FallbackClient.astream: %s failed (%s) — trying next",
-                               provider_name, type(exc).__name__)
+                    if text:
+                        yielded = True
+                        yield text
+            except Exception as exc:  # noqa: BLE001
+                if yielded:
+                    logger.error("FallbackClient.astream: %s failed mid-stream (%s)",
+                                 provider_name, exc)
+                    raise LLMUnavailableError(
+                        f"LLM provider {provider_name} failed mid-stream: {exc}",
+                        last_error=exc, providers_tried=[provider_name],
+                    ) from exc
+                logger.warning("FallbackClient.astream: %s failed (%s: %s); trying next",
+                               provider_name, type(exc).__name__, exc)
                 last_exc = exc
-        # All providers failed — yield error as string
-        logger.error("FallbackClient.astream: all providers failed. last_error=%s", last_exc)
-        yield str({
-            "error_type": "llm_all_providers_failed",
-            "message": f"All LLM providers exhausted: {last_exc}",
-        })
+                continue
+            self._record(provider_name, llm, getattr(final_chunk, "usage_metadata", None), state)
+            return
+        raise self._unavailable(last_exc)
+
+
+# ---------------------------------------------------------------------------
+# Provider construction and caching
+# ---------------------------------------------------------------------------
+
+# Provider clients hold async HTTP connections that belong to one event loop, and the
+# Streamlit app runs every graph invocation in a fresh loop. Clients are therefore cached
+# per event loop: all nodes of one graph run share them, and nothing is reused across loops.
+_loop_caches: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_no_loop_cache: dict = {}
+
+
+def _client_cache() -> dict:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return _no_loop_cache
+    return _loop_caches.setdefault(loop, {})
+
+
+def clear_llm_cache() -> None:
+    """Drop every cached provider client (used by tests and after config changes)."""
+    _loop_caches.clear()
+    _no_loop_cache.clear()
+
+
+def _load_llm_config() -> dict:
+    """Return the `llm` section of config/config.yaml (cached by file mtime)."""
+    from llm.config import get_section
+    return get_section("llm")
+
+
+def _cached(key: tuple, factory):
+    cache = _client_cache()
+    if key not in cache:
+        cache[key] = factory()
+    return cache[key]
+
+
+def _resolve_api_key(provider: str, env_name: str) -> tuple[str, bool]:
+    """Return ``(api_key, request_scoped)`` for a provider.
+
+    A key set with ``llm.context.use_llm_credentials`` wins over the environment.
+    An empty string set there disables the provider for that request.
+    """
+    from llm.context import get_llm_credential
+    scoped = get_llm_credential(provider)
+    if scoped is not None:
+        return scoped.strip(), True
+    return os.environ.get(env_name, "").strip(), False
+
+
+def _build_groq(cfg: dict):
+    api_key, scoped = _resolve_api_key("groq", "GROQ_API_KEY")
+    if not api_key:
+        logger.debug("get_llm: no Groq API key; skipping Groq")
+        return None
+    from llm.groq_client import _make_groq_llm
+    # The API key is part of the cache key: two tenants never share a client.
+    key = ("groq", cfg.get("groq_model"), cfg.get("request_timeout"), api_key)
+    if scoped:
+        return _cached(key, lambda: _make_groq_llm(cfg, api_key=api_key))
+    return _cached(key, lambda: _make_groq_llm(cfg))
+
+
+def _build_openai(cfg: dict, complexity: str):
+    api_key, scoped = _resolve_api_key("openai", "OPENAI_API_KEY")
+    if not api_key:
+        logger.debug("get_llm: no OpenAI API key; skipping OpenAI")
+        return None
+    from llm.openai_client import _make_openai_llm
+    tier = "complex" if complexity == "complex" else "simple"
+    model = cfg.get("openai_model_complex" if tier == "complex" else "openai_model_default")
+    key = ("openai", tier, model, cfg.get("request_timeout"), api_key)
+    if scoped:
+        return _cached(key, lambda: _make_openai_llm(cfg, complexity=tier, api_key=api_key))
+    return _cached(key, lambda: _make_openai_llm(cfg, complexity=tier))
+
+
+def _make_ollama_llm(cfg: dict):
+    from langchain_ollama import ChatOllama
+    return ChatOllama(
+        model=cfg.get("ollama_model", "qwen3:8b"),
+        base_url=cfg.get("ollama_base_url", "http://localhost:11434"),
+        temperature=0,
+    )
+
+
+def _build_ollama(cfg: dict):
+    if cfg.get("ollama_enabled", True) is False:
+        return None
+    key = ("ollama", cfg.get("ollama_model"), cfg.get("ollama_base_url"))
+    return _cached(key, lambda: _make_ollama_llm(cfg))
+
+
+def _safe_build(name: str, builder):
+    """Run a provider builder; a provider that cannot be constructed is skipped, not fatal."""
+    try:
+        return builder()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_llm: could not construct %s client (%s: %s); skipping",
+                       name, type(exc).__name__, exc)
+        return None
 
 
 def get_llm(node: str, state: dict | None = None) -> "FallbackClient":
     """Factory: returns a configured FallbackClient. Called inside agent node function bodies.
 
     Args:
-        node: Name of the calling node (e.g. 'gatekeeper', 'sql_generator').
-              Used in usage_metadata for debugging panel in Phase 8.
+        node: Name of the calling node (e.g. 'gatekeeper', 'sql_generator'); recorded in
+              usage_metadata.
         state: Current AgentState dict. Used to read query_plan.complexity for
                OpenAI model selection (gpt-4o vs gpt-4o-mini).
+
+    Providers without an API key are left out of the chain. The returned client raises
+    LLMUnavailableError on use if no provider can serve the request.
     """
-    from llm.groq_client import _make_groq_llm
-    from llm.openai_client import _make_openai_llm
-    from langchain_ollama import ChatOllama
     from llm.usage_tracker import UsageTracker
 
-    cfg = yaml.safe_load(open("config/config.yaml"))["llm"]  # fresh read — allows test patching
+    cfg = _load_llm_config()
 
-    groq_llm = _make_groq_llm(cfg)
-
-    # Determine OpenAI model: gpt-4o for complex plans, gpt-4o-mini otherwise
     query_plan = (state or {}).get("query_plan")
     complexity = "simple"
     if isinstance(query_plan, dict):
         complexity = query_plan.get("complexity", "simple")
-    openai_llm = _make_openai_llm(cfg, complexity=complexity)
 
-    ollama_llm = ChatOllama(
-        model=cfg.get("ollama_model", "qwen3:8b"),
-        base_url=cfg.get("ollama_base_url", "http://localhost:11434"),
-        temperature=0,
-    )
+    groq_llm = _safe_build("groq", lambda: _build_groq(cfg))
+    openai_llm = _safe_build("openai", lambda: _build_openai(cfg, complexity))
+    ollama_llm = _safe_build("ollama", lambda: _build_ollama(cfg))
 
-    tracker = UsageTracker()
-    return FallbackClient(groq_llm, openai_llm, ollama_llm, tracker, node_name=node)
+    return FallbackClient(groq_llm, openai_llm, ollama_llm, UsageTracker(), node_name=node,
+                          state=state)

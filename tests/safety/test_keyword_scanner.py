@@ -5,8 +5,6 @@ Requirements covered:
 - DB-002: audit_blocked_query logs blocked queries
 """
 import logging
-import pytest
-from unittest.mock import patch, MagicMock
 
 
 # ---------------------------------------------------------------------------

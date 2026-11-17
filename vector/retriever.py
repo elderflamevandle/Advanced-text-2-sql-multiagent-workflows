@@ -1,15 +1,24 @@
 """BaseRetriever ABC with Pinecone and ChromaDB backends (VECTOR-001, VECTOR-003)."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from vector.embeddings import EmbeddingGenerator, build_column_text, build_table_text
+from vector.embeddings import (  # noqa: F401 - EmbeddingGenerator is re-exported
+    EmbeddingGenerator,
+    build_column_text,
+    build_table_text,
+    get_embedder,
+)
+from vector.namespace import schema_namespace  # noqa: F401 - re-exported for callers
 from vector.schema_graph import SchemaGraph
 
 logger = logging.getLogger(__name__)
@@ -31,7 +40,63 @@ def _load_pinecone_config() -> dict:
 
 
 class BaseRetriever(ABC):
-    """Unified interface for vector-based schema retrieval backends."""
+    """Unified interface for vector-based schema retrieval backends.
+
+    One retriever instance serves every database in the process (see ``get_retriever``),
+    so nothing here may be specific to a single schema: the schemas used for FK expansion
+    are kept per namespace.
+    """
+
+    # Schemas kept in memory for FK expansion; the least recently used are dropped first.
+    MAX_CACHED_SCHEMAS = 256
+
+    def _init_namespace_state(self) -> None:
+        self._ns_lock = threading.Lock()
+        self._schemas: OrderedDict[str, dict] = OrderedDict()
+        self._embedded_namespaces: set[str] = set()
+
+    def register_schema(self, namespace: str, schema: dict[str, Any]) -> None:
+        """Remember *schema* for FK expansion and JOIN hints of *namespace*."""
+        with self._ns_lock:
+            self._schemas[namespace] = schema
+            self._schemas.move_to_end(namespace)
+            while len(self._schemas) > self.MAX_CACHED_SCHEMAS:
+                self._schemas.popitem(last=False)
+
+    def schema_for(self, namespace: str) -> dict[str, Any] | None:
+        with self._ns_lock:
+            schema = self._schemas.get(namespace)
+            if schema is not None:
+                self._schemas.move_to_end(namespace)
+            return schema
+
+    def _already_embedded(self, namespace: str) -> bool:
+        """True when *namespace* has vectors; the store is asked once per namespace."""
+        with self._ns_lock:
+            if namespace in self._embedded_namespaces:
+                return True
+        if self.namespace_exists(namespace):
+            self._mark_embedded(namespace)
+            return True
+        return False
+
+    def _mark_embedded(self, namespace: str) -> None:
+        with self._ns_lock:
+            self._embedded_namespaces.add(namespace)
+
+    def _expand(self, matched: list[str], namespace: str) -> tuple[list[str], list[dict]]:
+        """FK-expand *matched* and build JOIN hints from the schema of *namespace*."""
+        schema = self.schema_for(namespace)
+        if schema is None:
+            logger.warning(
+                "No schema registered for namespace '%s': FK expansion skipped", namespace
+            )
+            return matched, []
+        # Vectors can outlive a table (the store is shared and eventually consistent).
+        known = [t for t in matched if t in schema]
+        graph = SchemaGraph(schema)
+        expanded = graph.expand_tables(known)
+        return expanded, graph.generate_join_hints(expanded)
 
     @abstractmethod
     def embed_schema(self, schema: dict[str, Any], namespace: str) -> None:
@@ -73,8 +138,8 @@ class PineconeRetriever(BaseRetriever):
         self._pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
         self._ensure_index()
         self._index = self._pc.Index(self._config["index_name"])
-        self._embedder = EmbeddingGenerator()
-        self._schema_cache: dict | None = None
+        self._embedder = get_embedder()
+        self._init_namespace_state()
 
     def _ensure_index(self) -> None:
         """Create the serverless index if it doesn't yet exist."""
@@ -96,13 +161,12 @@ class PineconeRetriever(BaseRetriever):
         return f"{namespace}:tables" in stats.get("namespaces", {})
 
     def embed_schema(self, schema: dict[str, Any], namespace: str) -> None:
-        if self.namespace_exists(namespace):
-            logger.info(
-                "Namespace %s already exists, skipping embedding", namespace
-            )
+        # Always remember the schema, also when the vectors already exist (after a
+        # restart they do, and FK expansion still needs the schema).
+        self.register_schema(namespace, schema)
+        if self._already_embedded(namespace):
+            logger.debug("Namespace %s already embedded, skipping", namespace)
             return
-
-        self._schema_cache = schema
 
         table_names: list[str] = []
         table_texts: list[str] = []
@@ -163,6 +227,7 @@ class PineconeRetriever(BaseRetriever):
             for cid, emb, meta in zip(column_ids, column_embeddings, column_metadatas)
         ]
         self._index.upsert(vectors=column_vectors, namespace=f"{namespace}:columns")
+        self._mark_embedded(namespace)
 
     def retrieve_tables(
         self, query: str, namespace: str, top_k: int = 5
@@ -198,17 +263,7 @@ class PineconeRetriever(BaseRetriever):
         ]
 
         # FK expansion and JOIN hints
-        if self._schema_cache is not None:
-            graph = SchemaGraph(self._schema_cache)
-            expanded = graph.expand_tables(matched_table_names)
-            join_hints = graph.generate_join_hints(expanded)
-        else:
-            logger.warning(
-                "schema_cache is None — FK expansion skipped for namespace '%s'",
-                namespace,
-            )
-            expanded = matched_table_names
-            join_hints = []
+        expanded, join_hints = self._expand(matched_table_names, namespace)
 
         return {
             "tables": expanded,
@@ -233,8 +288,8 @@ class ChromaRetriever(BaseRetriever):
         chroma_path = Path.home() / ".text2sql" / "chroma"
         chroma_path.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(chroma_path))
-        self._embedder = EmbeddingGenerator()
-        self._schema_cache: dict | None = None
+        self._embedder = get_embedder()
+        self._init_namespace_state()
 
     def _collection_name(self, namespace: str, tier: str) -> str:
         """Sanitize namespace for ChromaDB — colons become underscores."""
@@ -245,13 +300,12 @@ class ChromaRetriever(BaseRetriever):
         return self._collection_name(namespace, "tables") in existing
 
     def embed_schema(self, schema: dict[str, Any], namespace: str) -> None:
-        if self.namespace_exists(namespace):
-            logger.info(
-                "Namespace %s already exists, skipping embedding", namespace
-            )
+        # Always remember the schema, also when the vectors already exist (after a
+        # restart they do, and FK expansion still needs the schema).
+        self.register_schema(namespace, schema)
+        if self._already_embedded(namespace):
+            logger.debug("Namespace %s already embedded, skipping", namespace)
             return
-
-        self._schema_cache = schema
 
         table_col = self._client.get_or_create_collection(
             self._collection_name(namespace, "tables")
@@ -309,6 +363,7 @@ class ChromaRetriever(BaseRetriever):
             embeddings=column_embeddings,
             metadatas=column_metadatas,
         )
+        self._mark_embedded(namespace)
 
     def retrieve_tables(
         self, query: str, namespace: str, top_k: int = 5
@@ -352,17 +407,7 @@ class ChromaRetriever(BaseRetriever):
                 column_metadata_list = col_results["metadatas"][0]
 
         # FK expansion and JOIN hints
-        if self._schema_cache is not None:
-            graph = SchemaGraph(self._schema_cache)
-            expanded = graph.expand_tables(matched_table_names)
-            join_hints = graph.generate_join_hints(expanded)
-        else:
-            logger.warning(
-                "schema_cache is None — FK expansion skipped for namespace '%s'",
-                namespace,
-            )
-            expanded = matched_table_names
-            join_hints = []
+        expanded, join_hints = self._expand(matched_table_names, namespace)
 
         return {
             "tables": expanded,
@@ -377,11 +422,42 @@ class ChromaRetriever(BaseRetriever):
 # ---------------------------------------------------------------------------
 
 
+_retrievers: dict[str, BaseRetriever] = {}
+_retrievers_lock = threading.Lock()
+
+
+def _backend_key() -> str:
+    api_key = os.getenv("PINECONE_API_KEY")
+    if api_key:
+        # A different API key is a different Pinecone project, hence a different client.
+        return "pinecone:" + hashlib.sha1(api_key.encode("utf-8")).hexdigest()[:12]
+    return "chroma"
+
+
 def get_retriever() -> BaseRetriever:
-    """Return PineconeRetriever if PINECONE_API_KEY is set, else ChromaRetriever."""
-    if os.getenv("PINECONE_API_KEY"):
-        return PineconeRetriever()
-    logger.warning(
-        "PINECONE_API_KEY not set - using ChromaDB local fallback"
-    )
-    return ChromaRetriever()
+    """Return the shared retriever for the configured backend.
+
+    PineconeRetriever if PINECONE_API_KEY is set, else ChromaRetriever. The instance is
+    created once per backend and reused: building one opens a client and, on first use,
+    loads the embedding model, which must not happen on every question.
+    """
+    key = _backend_key()
+    retriever = _retrievers.get(key)
+    if retriever is not None:
+        return retriever
+    with _retrievers_lock:
+        retriever = _retrievers.get(key)
+        if retriever is None:
+            if key.startswith("pinecone:"):
+                retriever = PineconeRetriever()
+            else:
+                logger.warning("PINECONE_API_KEY not set - using ChromaDB local fallback")
+                retriever = ChromaRetriever()
+            _retrievers[key] = retriever
+    return retriever
+
+
+def reset_retrievers() -> None:
+    """Drop the cached retrievers (tests, or after changing vector-store settings)."""
+    with _retrievers_lock:
+        _retrievers.clear()

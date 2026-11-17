@@ -31,6 +31,8 @@ def _make_st_mock():
     st_mock.session_state.__contains__ = lambda self_inner, key: key in fake_state
     # Make st.columns(N) return N MagicMock columns (unpacking support)
     st_mock.columns.side_effect = lambda n: [MagicMock() for _ in range(n)]
+    # No query submitted: importing app.py runs main(), which must not start a graph run.
+    st_mock.chat_input.return_value = None
     return st_mock, fake_state
 
 
@@ -63,7 +65,7 @@ def test_app_imports_without_error():
         st_mock=st_mock,
         extra_mocks={
             "graph.builder": builder_mock,
-            "streamlit_app.components.sidebar": sidebar_mock,
+            "components.sidebar": sidebar_mock,
         },
     )
     # If we get here without exception, import succeeded
@@ -82,7 +84,7 @@ def test_get_graph_is_cache_resource():
         st_mock=st_mock,
         extra_mocks={
             "graph.builder": builder_mock,
-            "streamlit_app.components.sidebar": sidebar_mock,
+            "components.sidebar": sidebar_mock,
         },
     )
 
@@ -99,7 +101,7 @@ def test_init_session_sets_required_keys():
 
     app_mod = _import_app(
         st_mock=st_mock,
-        extra_mocks={"streamlit_app.components.sidebar": sidebar_mock},
+        extra_mocks={"components.sidebar": sidebar_mock},
     )
 
     # Reset state, then call init_session directly
@@ -128,7 +130,7 @@ def test_reset_session_clears_and_reinitializes():
 
     app_mod = _import_app(
         st_mock=st_mock,
-        extra_mocks={"streamlit_app.components.sidebar": sidebar_mock},
+        extra_mocks={"components.sidebar": sidebar_mock},
     )
 
     # Pre-populate state with a stale key
@@ -146,3 +148,40 @@ def test_reset_session_clears_and_reinitializes():
     assert "old_key" not in fake_state
     # thread_id must be re-initialized
     assert "thread_id" in fake_state
+
+
+def test_app_sets_local_defaults_without_overriding_the_environment(monkeypatch):
+    """The bundled SQLite demo must work out of the box; explicit settings always win."""
+    import os
+
+    st_mock, fake_state = _make_st_mock()
+    sidebar_mock = MagicMock()
+    mocks = {"components.sidebar": sidebar_mock}
+
+    for name in ("T2S_ALLOW_FILE_DATABASES", "T2S_ALLOW_PRIVATE_HOSTS", "T2S_METADATA_URL"):
+        monkeypatch.delenv(name, raising=False)
+    with patch("dotenv.load_dotenv"):
+        _import_app(st_mock=st_mock, extra_mocks=mocks)
+    assert os.environ["T2S_ALLOW_FILE_DATABASES"] == "true"
+    assert os.environ["T2S_ALLOW_PRIVATE_HOSTS"] == "true"
+    assert os.environ["T2S_METADATA_URL"] == "sqlite://"
+    assert fake_state["tenant_id"].startswith("ui-")
+    assert fake_state["connection_id"] is None
+
+    monkeypatch.setenv("T2S_ALLOW_FILE_DATABASES", "false")
+    monkeypatch.setenv("T2S_METADATA_URL", "postgresql://meta")
+    with patch("dotenv.load_dotenv"):
+        _import_app(st_mock=st_mock, extra_mocks=mocks)
+    assert os.environ["T2S_ALLOW_FILE_DATABASES"] == "false"
+    assert os.environ["T2S_METADATA_URL"] == "postgresql://meta"
+
+
+def test_each_session_gets_its_own_tenant_id():
+    sidebar_mock = MagicMock()
+    tenants = []
+    for _ in range(2):
+        st_mock, fake_state = _make_st_mock()
+        with patch("dotenv.load_dotenv"):
+            _import_app(st_mock=st_mock, extra_mocks={"components.sidebar": sidebar_mock})
+        tenants.append(fake_state["tenant_id"])
+    assert tenants[0] != tenants[1]

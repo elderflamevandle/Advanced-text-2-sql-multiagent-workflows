@@ -4,6 +4,7 @@ import logging
 import re
 from typing import Optional
 
+from agents.prompt_context import extra_context, schema_prompt
 from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,10 @@ Dialect-specific reminders: {dialect_reminder}
 Rules:
 1. ONLY generate SELECT or WITH (CTE) statements — never INSERT, UPDATE, DELETE, DROP, etc.
 2. Add brief inline comments for non-obvious logic.
-3. Output format (use exactly these labels):
+3. Use only the tables and columns listed in the schema context. Never invent names.
+4. Prefer the listed joins when tables have to be combined.
+5. When the schema context lists values for a column, use them verbatim in filters.
+6. Output format (use exactly these labels):
    SQL:
    <the sql statement>
    EXPLANATION:
@@ -51,28 +55,25 @@ _DIALECT_REMINDERS: dict[str, str] = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _validate_sql(sql: str) -> str:
-    """Strip markdown fences and verify SQL starts with SELECT or WITH.
+def _validate_sql(sql: str, db_type: Optional[str] = None) -> str:
+    """Strip markdown fences and verify the SQL is a single read-only query.
+
+    Uses database.safety.scan_sql with the dialect of db_type.
 
     Returns clean SQL string on success.
-    Raises ValueError if statement is not a read-only SELECT/WITH query.
+    Raises ValueError (with the scanner's reason) if the statement is not safe.
     """
+    from database.safety import scan_sql
+
     cleaned = re.sub(r"```(?:sql)?\s*", "", sql, flags=re.IGNORECASE).replace("```", "").strip()
-    upper = cleaned.upper().lstrip()
-    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
-        raise ValueError(f"Unsafe or unsupported SQL statement (must start with SELECT or WITH): {cleaned[:80]!r}")
+    verdict = scan_sql(cleaned, dialect=db_type)
+    if not verdict["safe"]:
+        raise ValueError(
+            f"Unsafe or unsupported SQL statement ({verdict['statement_type']}): "
+            f"{verdict['reason']} SQL: {cleaned[:80]!r}"
+        )
     return cleaned
 
-
-def _format_schema_context(schema: dict) -> str:
-    if not schema:
-        return "(no schema provided)"
-    lines = []
-    for table, info in schema.items():
-        cols = info.get("columns", [])
-        col_strs = [f"{c.get('name', '?')} {c.get('type', '')}" for c in cols]
-        lines.append(f"Table {table}: {', '.join(col_strs)}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +88,9 @@ async def sql_generator_node(state: AgentState) -> dict:
     query = state.get("resolved_query") or state.get("user_query", "")
     query_plan = state.get("query_plan") or {}
     db_type = state.get("db_type") or "sqlite"
-    schema = state.get("schema") or {}
 
     dialect_reminder = _DIALECT_REMINDERS.get(db_type, "Generate standard SQL.")
-    schema_context = _format_schema_context(schema)
+    schema_context = schema_prompt(state)
     query_plan_json = json.dumps(query_plan, indent=2) if query_plan else "{}"
 
     system_content = _GENERATOR_PROMPT.format(
@@ -98,7 +98,7 @@ async def sql_generator_node(state: AgentState) -> dict:
         schema_context=schema_context,
         db_type=db_type,
         dialect_reminder=dialect_reminder,
-    )
+    ) + extra_context(state, previous_attempt=True)
 
     llm = get_llm(node="sql_generator", state=state)
     messages = [
@@ -118,7 +118,7 @@ async def sql_generator_node(state: AgentState) -> dict:
     sql_part = re.sub(r"^SQL\s*:\s*", "", sql_part.strip(), flags=re.IGNORECASE).strip()
 
     try:
-        validated_sql = _validate_sql(sql_part)
+        validated_sql = _validate_sql(sql_part, db_type)
     except ValueError as exc:
         logger.warning("sql_generator_node: SQL validation failed — %s", exc)
         return {"generated_sql": None, "error_log": str(exc)}

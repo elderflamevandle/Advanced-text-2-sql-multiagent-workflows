@@ -12,10 +12,19 @@ EXPECTED_FIELDS = {
     "user_query",
     "resolved_query",
     "db_type",
-    "db_manager",
+    "tenant_id",
+    "connection_id",
     "query_type",
     "schema",
     "relevant_tables",
+    "schema_context",
+    "join_hints",
+    "examples",
+    "lessons",
+    "query_id",
+    "clarification_question",
+    "reselect_count",
+    "required_tables",
     "query_plan",
     "generated_sql",
     "sql_explanation",
@@ -32,7 +41,8 @@ EXPECTED_FIELDS = {
 
 
 def test_agentstate_has_required_fields():
-    """GRAPH-001: AgentState must have exactly 20 required fields."""
+    """GRAPH-001: AgentState fields. db_manager is intentionally absent: it is not
+    serializable by the checkpointer; nodes use database.manager.get_active_manager()."""
     from graph.state import AgentState
 
     hints = get_type_hints(AgentState, include_extras=True)
@@ -40,7 +50,8 @@ def test_agentstate_has_required_fields():
         f"Field mismatch. Missing: {EXPECTED_FIELDS - set(hints.keys())}, "
         f"Extra: {set(hints.keys()) - EXPECTED_FIELDS}"
     )
-    assert len(hints) == 20
+    assert len(hints) == 29
+    assert "db_manager" not in hints
 
 
 def test_messages_uses_add_messages_reducer():
@@ -67,7 +78,6 @@ def test_messages_uses_add_messages_reducer():
 def test_agentstate_is_json_serializable():
     """GRAPH-001: AgentState dict with all None optional values must be JSON-serializable."""
     state = make_initial_state()
-    # db_manager=None must be JSON-serializable (None → null in JSON)
     try:
         serialized = json.dumps(state)
     except TypeError as exc:
@@ -77,7 +87,7 @@ def test_agentstate_is_json_serializable():
     deserialized = json.loads(serialized)
     assert deserialized["user_query"] == "test query"
     assert deserialized["retry_count"] == 0
-    assert deserialized["db_manager"] is None
+    assert "db_manager" not in deserialized
 
 
 def test_routing_gatekeeper():
@@ -108,3 +118,82 @@ def test_routing_executor():
     assert route_after_executor({"error_log": "column not found", "retry_count": 1}) == "correction_plan"
     # Error + retries exhausted (count=2) → formatter
     assert route_after_executor({"error_log": "persistent error", "retry_count": 2}) == "formatter"
+
+
+def test_usage_metadata_is_reducer_field():
+    """usage_metadata accumulates across nodes; None resets it for a new query."""
+    from graph.state import AgentState, merge_usage_metadata
+
+    hints = get_type_hints(AgentState, include_extras=True)
+    assert get_origin(hints["usage_metadata"]) is Annotated
+    assert get_args(hints["usage_metadata"])[1] is merge_usage_metadata
+
+    assert merge_usage_metadata(None, [{"a": 1}]) == [{"a": 1}]
+    assert merge_usage_metadata([{"a": 1}], [{"b": 2}]) == [{"a": 1}, {"b": 2}]
+    assert merge_usage_metadata([{"a": 1}], []) == [{"a": 1}]
+    assert merge_usage_metadata([{"a": 1}], None) == []
+    current = [{"a": 1}]
+    merge_usage_metadata(current, [{"b": 2}])
+    assert current == [{"a": 1}], "reducer must not mutate its input"
+
+
+@pytest.mark.parametrize(
+    "error_type", ["llm_all_providers_failed", "blocked_query", "no_connection", "user_rejected"]
+)
+def test_routing_executor_non_correctable_errors_skip_correction(error_type):
+    from graph.conditions import route_after_executor
+
+    state = {"error_log": {"error_type": error_type, "message": "x"}, "retry_count": 0}
+    assert route_after_executor(state) == "formatter"
+
+
+def test_routing_executor_correctable_dict_error_enters_correction():
+    from graph.conditions import route_after_executor
+
+    state = {"error_log": {"error_type": "syntax_error", "message": "x"}, "retry_count": 0}
+    assert route_after_executor(state) == "correction_plan"
+
+
+def test_routing_executor_retry_limit_comes_from_config(monkeypatch):
+    import graph.conditions as conditions
+
+    state = {"error_log": {"error_type": "syntax_error"}, "retry_count": 2}
+    assert conditions.get_max_correction_retries() == 2, "config/config.yaml should say 2"
+    assert conditions.route_after_executor(state) == "formatter"
+
+    monkeypatch.setattr(conditions, "get_max_correction_retries", lambda: 4)
+    assert conditions.route_after_executor(state) == "correction_plan"
+    assert conditions.route_after_executor(dict(state, retry_count=4)) == "formatter"
+
+    monkeypatch.setattr(conditions, "get_max_correction_retries", lambda: 0)
+    assert conditions.route_after_executor(dict(state, retry_count=0)) == "formatter"
+
+
+def test_max_correction_retries_reads_app_section(monkeypatch):
+    import graph.conditions as conditions
+    import llm.config as llm_config
+
+    monkeypatch.setattr(llm_config, "load_config",
+                        lambda: {"app": {"max_correction_retries": 5}})
+    assert conditions.get_max_correction_retries() == 5
+    monkeypatch.setattr(llm_config, "load_config",
+                        lambda: {"app": {"max_correction_retries": "oops"}})
+    assert conditions.get_max_correction_retries() == conditions.DEFAULT_MAX_CORRECTION_RETRIES
+    monkeypatch.setattr(llm_config, "load_config", lambda: {})
+    assert conditions.get_max_correction_retries() == conditions.DEFAULT_MAX_CORRECTION_RETRIES
+
+
+def test_routing_llm_failure_goes_to_formatter():
+    from graph.conditions import (
+        route_after_gatekeeper,
+        route_after_hitl,
+        route_unless_llm_failed,
+    )
+
+    failed = {"error_log": {"error_type": "llm_all_providers_failed"}, "query_type": "sql"}
+    assert route_after_gatekeeper(failed) == "formatter"
+    assert route_unless_llm_failed(failed) == "formatter"
+    assert route_unless_llm_failed({"error_log": None}) == "continue"
+    assert route_unless_llm_failed({"error_log": "plain string error"}) == "continue"
+    assert route_unless_llm_failed({"error_log": {"error_type": "syntax_error"}}) == "continue"
+    assert route_after_hitl({"error_log": {"error_type": "user_rejected"}}) == "formatter"

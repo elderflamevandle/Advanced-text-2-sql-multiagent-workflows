@@ -15,7 +15,14 @@ COST_TABLE: dict[str, tuple[float, float]] = {
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    rates = COST_TABLE.get(model, (0.0, 0.0))
+    rates = COST_TABLE.get(model)
+    if rates is None and isinstance(model, str):
+        # Providers may report dated variants (e.g. "gpt-4o-mini-2024-07-18"):
+        # fall back to the longest known model name that prefixes it.
+        matches = [name for name in COST_TABLE if model.startswith(name)]
+        rates = COST_TABLE[max(matches, key=len)] if matches else None
+    if rates is None:
+        rates = (0.0, 0.0)
     return (input_tokens / 1000) * rates[0] + (output_tokens / 1000) * rates[1]
 
 
@@ -46,8 +53,11 @@ class UsageTracker:
         }
         self._entries.append(entry)
         if state is not None:
+            # Rebinds the key on the dict the node was given. LangGraph does not persist
+            # in-place state mutation; graph.resilience.resilient_node hands each node a
+            # shallow copy and returns the entries added here as a state update.
             existing = state.get("usage_metadata") or []
-            state["usage_metadata"] = existing + [entry]
+            state["usage_metadata"] = list(existing) + [entry]
         logger.debug("UsageTracker.record: %s/%s node=%s tokens=%d cost=$%.6f",
                      provider, model, node_name, input_tokens + output_tokens,
                      entry["estimated_cost_usd"])

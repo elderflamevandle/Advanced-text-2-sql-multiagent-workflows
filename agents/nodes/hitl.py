@@ -135,7 +135,7 @@ async def hitl_node(state: AgentState) -> dict:
 
     from langgraph.types import interrupt  # noqa: PLC0415 — lazy import
 
-    interrupt(
+    decision = interrupt(
         {
             "type": "hitl_review",
             "generated_sql": generated_sql,
@@ -144,7 +144,38 @@ async def hitl_node(state: AgentState) -> dict:
         }
     )
 
-    # When the graph resumes, this node will be called again with updated state
-    # containing approval_status set by the runtime. The code above (step 2) handles it.
-    # This return is never reached in normal flow but satisfies static analysis.
-    return {}  # pragma: no cover
+    # interrupt() returns the value passed to Command(resume=...) when the run is resumed.
+    return _apply_decision(decision, state)
+
+
+def _apply_decision(decision: Any, state: AgentState) -> dict:
+    """Translate a reviewer's decision into a state update.
+
+    Accepts {"action": "approved" | "edited" | "rejected", "sql": str} (the Streamlit card)
+    or a bare action string. Anything unrecognised is treated as a rejection: a query
+    never runs on an ambiguous answer. Edited SQL is only stored here; the executor still
+    runs it through the safety scanner.
+    """
+    if isinstance(decision, dict):
+        action = str(decision.get("action") or decision.get("decision") or "").lower()
+        edited_sql = decision.get("sql")
+    else:
+        action = str(decision or "").lower()
+        edited_sql = None
+
+    if action in ("approved", "approve"):
+        return {"approval_status": "approved"}
+    if action in ("edited", "edit") and isinstance(edited_sql, str) and edited_sql.strip():
+        return {"approval_status": "approved", "generated_sql": edited_sql.strip()}
+
+    logger.warning("hitl_node: query rejected during review (action=%r)", action)
+    return {
+        "approval_status": "rejected",
+        "error_log": {
+            "error_type": "user_rejected",
+            "message": "Query rejected by user during HITL review.",
+            "dialect": state.get("db_type", "unknown"),
+            "failed_sql": state.get("generated_sql"),
+            "hint": "The SQL was reviewed and rejected. Please rephrase your question.",
+        },
+    }

@@ -1,12 +1,13 @@
 """Chat interface — rendering, query submission, streaming, and HITL approval card."""
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
+import re
 from typing import Generator
 
 import streamlit as st
 from langgraph.errors import GraphInterrupt
-from llm.fallback import get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -25,26 +26,13 @@ NODE_LABELS = {
 
 
 # ---------------------------------------------------------------------------
-# Async-to-sync adapter for st.write_stream compatibility
+# Local chunker for st.write_stream (typing effect without any LLM call)
 # ---------------------------------------------------------------------------
 
-def _sync_aiter(async_gen) -> Generator[str, None, None]:
-    """Drive an async generator synchronously for use with st.write_stream().
-
-    st.write_stream() expects a synchronous iterable of str chunks.
-    We can't use asyncio.run() inside a running loop, so we create a dedicated
-    event loop in the current thread to drain the async generator.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        while True:
-            try:
-                chunk = loop.run_until_complete(async_gen.__anext__())
-                yield chunk
-            except StopAsyncIteration:
-                break
-    finally:
-        loop.close()
+def _iter_text_chunks(text: str) -> Generator[str, None, None]:
+    """Yield the text word by word, whitespace preserved; "".join(chunks) == text."""
+    for match in re.finditer(r"\S+\s*|\s+", text):
+        yield match.group(0)
 
 
 # ---------------------------------------------------------------------------
@@ -84,23 +72,44 @@ def _render_message(msg: dict, msg_key: str = ""):
 # Query submission — stage labels + token streaming
 # ---------------------------------------------------------------------------
 
-def _sync_api_keys():
-    """Push sidebar API keys from session_state into os.environ for LLM clients."""
+def _export_keys_to_environ(key_map: dict):
     import os
-    key_map = {
-        "groq_api_key": "GROQ_API_KEY",
-        "openai_api_key": "OPENAI_API_KEY",
-        "pinecone_api_key": "PINECONE_API_KEY",
-    }
     for state_key, env_key in key_map.items():
         val = st.session_state.get(state_key, "")
         if val:
             os.environ[env_key] = val
 
 
+def _llm_credentials():
+    """Context manager that scopes this session's LLM keys to one graph run.
+
+    os.environ is shared by every browser session, so a key typed into one sidebar must
+    not be written there. ``llm.context.use_llm_credentials`` keeps the keys in
+    contextvars instead. The returned object is created here, on the script thread
+    (session_state is only readable there), and entered inside the coroutine that runs
+    the graph. An empty sidebar field passes None, which leaves the environment key in use.
+
+    The Pinecone key has no request-scoped equivalent yet and is still exported to
+    os.environ. Without llm.context all keys are exported, as before.
+    """
+    try:
+        from llm.context import use_llm_credentials
+    except ImportError:
+        _export_keys_to_environ({
+            "groq_api_key": "GROQ_API_KEY",
+            "openai_api_key": "OPENAI_API_KEY",
+            "pinecone_api_key": "PINECONE_API_KEY",
+        })
+        return contextlib.nullcontext()
+    _export_keys_to_environ({"pinecone_api_key": "PINECONE_API_KEY"})
+    return use_llm_credentials(
+        groq_api_key=st.session_state.get("groq_api_key") or None,
+        openai_api_key=st.session_state.get("openai_api_key") or None,
+    )
+
+
 def submit_query(user_query: str):
     """Process a new user query: add to history, run graph, stream response, store result."""
-    _sync_api_keys()
     # Add user message
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -127,13 +136,10 @@ def submit_query(user_query: str):
                 logger.exception("Graph execution error: %s", exc)
                 return
 
-        # Phase 2: Stream the final answer token-by-token using FallbackClient.astream()
-        # This uses the upgraded astream() from 08-01 which yields str chunks.
-        # st.write_stream() renders each chunk as it arrives and returns the full text.
-        raw_answer = final_state.get("final_answer") or "No answer generated."
-        streamed_text = _stream_final_answer(raw_answer)
-        # streamed_text is the full accumulated string returned by st.write_stream()
-        answer = streamed_text if streamed_text else raw_answer
+        # Phase 2: show the graph's final_answer itself. No LLM is involved here: the
+        # formatter node already wrote the answer; this only renders it progressively.
+        answer = final_state.get("final_answer") or "No answer generated."
+        _stream_final_answer(answer)
 
         # Live render uses "live" key — this message has not been appended to messages yet,
         # so it won't be re-rendered by the messages loop on the same rerun.
@@ -150,28 +156,17 @@ def submit_query(user_query: str):
 
 
 def _stream_final_answer(answer_text: str) -> str:
-    """Stream the final answer token-by-token using FallbackClient.astream() + st.write_stream().
+    """Render the final answer text as-is and return it unchanged.
 
-    Uses get_llm(node='chat_stream') to obtain a configured FallbackClient,
-    then streams the answer token-by-token via FallbackClient.astream().
-
-    If FallbackClient is unavailable or streaming fails, falls back to st.markdown().
-
-    Returns the full answer text (either from write_stream or the fallback).
+    The text is fed to st.write_stream() from a local generator, purely for the typing
+    effect. It is never sent to an LLM. Falls back to st.markdown() if streaming fails.
     """
     try:
-        from langchain_core.messages import HumanMessage
-
-        # Use get_llm factory to get a configured FallbackClient
-        client = get_llm(node="chat_stream")
-        async_gen = client.astream([HumanMessage(content=answer_text)])
-        # st.write_stream() requires a sync iterable — use the _sync_aiter adapter
-        result = st.write_stream(_sync_aiter(async_gen))
-        return result if isinstance(result, str) else answer_text
+        st.write_stream(_iter_text_chunks(answer_text))
     except Exception as exc:
-        logger.warning("FallbackClient.astream streaming failed (%s) — falling back to markdown", exc)
+        logger.warning("st.write_stream failed (%s); falling back to markdown", exc)
         st.markdown(answer_text)
-        return answer_text
+    return answer_text
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +186,8 @@ def _run_async(coro):
         return future.result()
 
 
-async def _astream_graph(initial_state: dict, config: dict, labels: list) -> dict:
+async def _astream_graph(initial_state: dict, config: dict, labels: list,
+                         credentials=None) -> dict:
     """Async: stream graph, collect node labels, then return the full checkpoint state.
 
     Uses stream_mode="updates" to get per-node labels for the status bar, then calls
@@ -199,9 +195,12 @@ async def _astream_graph(initial_state: dict, config: dict, labels: list) -> dic
     like user_query and db_type that node output dicts never contain).
     """
     from graph.builder import compiled_graph as graph
-    async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
-        for node_name in chunk:
-            labels.append(NODE_LABELS.get(node_name, f"Running {node_name}..."))
+    # Entered here, not by the caller: this coroutine runs in its own thread, and
+    # contextvars set on the script thread would not be visible in it.
+    with credentials if credentials is not None else contextlib.nullcontext():
+        async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
+            for node_name in chunk:
+                labels.append(NODE_LABELS.get(node_name, f"Running {node_name}..."))
     # Fetch full checkpoint state — captures every field, not just node output diffs
     snapshot = await graph.aget_state(config)
     return dict(snapshot.values) if snapshot else {}
@@ -210,8 +209,9 @@ async def _astream_graph(initial_state: dict, config: dict, labels: list) -> dic
 def _run_graph_streaming(initial_state: dict, config: dict, status_container) -> dict:
     """Run the async graph in an isolated thread, updating status labels as nodes complete."""
     labels: list = []
+    credentials = _llm_credentials()
     # Run graph in dedicated thread — isolates LangGraph ContextVars from Streamlit's loop
-    final_state = _run_async(_astream_graph(initial_state, config, labels))
+    final_state = _run_async(_astream_graph(initial_state, config, labels, credentials))
     # Replay node labels back into the status container from the main thread
     for label in labels:
         status_container.update(label=label, state="running")
@@ -225,28 +225,50 @@ def _run_graph_streaming(initial_state: dict, config: dict, status_container) ->
 def _build_initial_state(user_query: str) -> dict:
     """Build the initial AgentState dict for graph invocation.
 
-    DatabaseManager is intentionally excluded — it is not msgpack-serializable
-    and cannot be stored in LangGraph's MemorySaver checkpoint. Instead, the
-    schema is extracted here and passed as a plain dict, and agent nodes that
-    need to execute SQL use get_active_manager() from database.manager.
+    Only identifiers go into the state (it is checkpointed): the session's tenant_id and
+    connection_id. Nodes resolve the database from them through the connection registry,
+    and the schema is read from the registry here and passed as a plain dict.
+
+    Without a registered connection (registry unavailable, legacy path) the schema comes
+    from the process-wide get_active_manager() and the ids stay None.
     """
-    from database.manager import get_active_manager
-    db_type = (st.session_state.get("sidebar_db_type") or "SQLite").lower()
-    mgr = get_active_manager()
+    tenant_id = st.session_state.get("tenant_id")
+    connection_id = st.session_state.get("connection_id")
+    # The dialect of the connected database, not whatever the selectbox shows right now.
+    db_type = (st.session_state.get("connection_db_type")
+               or st.session_state.get("sidebar_db_type") or "SQLite").lower()
     schema = None
-    if mgr is not None:
+    if connection_id:
         try:
-            schema = mgr.get_schema()
+            from database.registry import get_registry
+            schema = get_registry().get_schema(tenant_id, connection_id)
         except Exception as exc:
-            logger.warning("_build_initial_state: failed to extract schema: %s", exc)
+            logger.warning("_build_initial_state: no schema from registry: %s", exc)
+    else:
+        from database.manager import get_active_manager
+        mgr = get_active_manager()
+        if mgr is not None:
+            try:
+                schema = mgr.get_schema()
+            except Exception as exc:
+                logger.warning("_build_initial_state: failed to extract schema: %s", exc)
     return {
         "messages": [],
         "user_query": user_query,
         "db_type": db_type,
+        "tenant_id": tenant_id if connection_id else None,
+        "connection_id": connection_id,
         "schema": schema,
         "retry_count": 0,
         # Explicitly reset per-query fields to prevent MemorySaver checkpoint leakage
         # across separate queries on the same thread_id.
+        "usage_metadata": None,  # reducer field: None resets the accumulated list
+        "resolved_query": None,
+        "query_type": None,
+        "query_plan": None,
+        "generated_sql": None,
+        "sql_explanation": None,
+        "execution_metadata": None,
         "error_log": None,
         "sql_history": [],
         "correction_plan": None,
@@ -276,9 +298,11 @@ def _process_hitl_decision():
     st.session_state.hitl_config = None
     st.session_state.hitl_decision = None
 
+    credentials = _llm_credentials()
     try:
         async def _resume():
-            return await graph.ainvoke(Command(resume=decision), config=config)
+            with credentials:
+                return await graph.ainvoke(Command(resume=decision), config=config)
         final_state = _run_async(_resume())
     except Exception as exc:
         st.error(f"Error resuming after HITL: {exc}")

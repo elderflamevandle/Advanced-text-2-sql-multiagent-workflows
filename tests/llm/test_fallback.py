@@ -6,6 +6,13 @@ import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch):
+    """Skip the pause between providers so fallback tests run instantly."""
+    import llm.fallback as fb
+    monkeypatch.setattr(fb, "RETRY_DELAY_SECONDS", 0)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -287,27 +294,30 @@ def test_simple_query_uses_gpt4o_mini():
         importlib.reload(oai_mod)
 
 
-def test_all_providers_fail_returns_error_dict():
-    """All 3 providers fail -> returns structured error dict (not raises)."""
+def test_all_providers_fail_raises_typed_error():
+    """All 3 providers fail -> LLMUnavailableError (never a dict that nodes would misuse)."""
     async def _run():
+        from llm.errors import LLMUnavailableError
+
         mock_groq = MagicMock()
         mock_groq.ainvoke = AsyncMock(side_effect=Exception("groq down"))
-        mock_groq.model_name = "llama-3.3-70b-versatile"
-
         mock_openai = MagicMock()
         mock_openai.ainvoke = AsyncMock(side_effect=Exception("openai down"))
-        mock_openai.model_name = "gpt-4o-mini"
-
         mock_ollama = MagicMock()
         mock_ollama.ainvoke = AsyncMock(side_effect=Exception("ollama down"))
-        mock_ollama.model = "qwen3:8b"
 
-        client, _ = _make_client(mock_groq, mock_openai, mock_ollama)
-        result = await client.ainvoke(["test"])
-        assert isinstance(result, dict), "Expected dict on all-fail"
-        assert result.get("error_type") == "llm_all_providers_failed"
-        assert "message" in result
-        assert "hint" in result
+        client, tracker = _make_client(mock_groq, mock_openai, mock_ollama)
+        with pytest.raises(LLMUnavailableError) as excinfo:
+            await client.ainvoke(["test"])
+        err = excinfo.value
+        assert "ollama down" in str(err)
+        assert err.providers_tried == ["groq", "openai", "ollama"]
+        assert tracker.entries == []
+        log = err.to_error_log(dialect="sqlite")
+        assert log["error_type"] == "llm_all_providers_failed"
+        assert log["dialect"] == "sqlite"
+        assert log["failed_sql"] is None
+        assert log["message"] and log["hint"]
 
     asyncio.run(_run())
 
@@ -456,26 +466,214 @@ def test_astream_records_usage_after_streaming():
     asyncio.run(_run())
 
 
-def test_astream_error_dict_yields_string_not_dict():
-    """All providers fail -> astream() yields a string error message, not a raw dict."""
+def test_astream_all_providers_fail_raises_typed_error():
+    """All providers fail -> astream() raises LLMUnavailableError, like ainvoke()."""
     async def _run():
+        from llm.errors import LLMUnavailableError
+
         mock_groq = MagicMock()
-        mock_groq.model_name = "llama-3.3-70b-versatile"
         mock_groq.astream = MagicMock(side_effect=Exception("groq astream down"))
         mock_openai = MagicMock()
-        mock_openai.model_name = "gpt-4o-mini"
         mock_openai.astream = MagicMock(side_effect=Exception("openai astream down"))
         mock_ollama = MagicMock()
-        mock_ollama.model = "qwen3:8b"
         mock_ollama.astream = MagicMock(side_effect=Exception("ollama astream down"))
         client, _ = _make_client(mock_groq, mock_openai, mock_ollama)
 
         chunks = []
-        async for chunk in client.astream(["test"]):
-            chunks.append(chunk)
-
-        assert len(chunks) == 1, "Exactly one error chunk expected"
-        assert isinstance(chunks[0], str), f"Error must be str, got {type(chunks[0]).__name__}"
-        assert "llm_all_providers_failed" in chunks[0], f"Error dict marker missing: {chunks[0]}"
+        with pytest.raises(LLMUnavailableError):
+            async for chunk in client.astream(["test"]):
+                chunks.append(chunk)
+        assert chunks == []
 
     asyncio.run(_run())
+
+
+def test_astream_mid_stream_failure_does_not_replay_on_next_provider():
+    """A provider that fails after yielding text raises; the next provider is not started."""
+    async def _run():
+        from llm.errors import LLMUnavailableError
+
+        async def _broken(messages):
+            chunk = MagicMock()
+            chunk.content = "partial"
+            yield chunk
+            raise RuntimeError("connection dropped")
+
+        mock_groq = MagicMock()
+        mock_groq.astream = _broken
+        mock_openai = MagicMock()
+        mock_openai.astream = MagicMock()
+        client, _ = _make_client(mock_groq, mock_openai, None)
+
+        chunks = []
+        with pytest.raises(LLMUnavailableError):
+            async for chunk in client.astream(["test"]):
+                chunks.append(chunk)
+        assert chunks == ["partial"]
+        assert mock_openai.astream.call_count == 0
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Provider skipping, state default, model name, get_llm factory and caching
+# ---------------------------------------------------------------------------
+
+def test_none_providers_are_skipped():
+    """A provider passed as None is left out of the chain."""
+    async def _run():
+        mock_ollama = MagicMock()
+        mock_ollama.ainvoke = AsyncMock(return_value=_mock_response())
+        mock_ollama.model = "qwen3:8b"
+        client, tracker = _make_client(None, None, mock_ollama)
+        assert client.provider_names == ["ollama"]
+        result = await client.ainvoke(["test"])
+        assert result.content == "SELECT 1"
+        assert tracker.entries[0]["provider"] == "ollama"
+        assert tracker.entries[0]["model"] == "qwen3:8b"
+
+    asyncio.run(_run())
+
+
+def test_no_providers_configured_raises_typed_error():
+    async def _run():
+        from llm.errors import LLMUnavailableError
+        client, _ = _make_client(None, None, None)
+        with pytest.raises(LLMUnavailableError, match="No LLM provider is configured"):
+            await client.ainvoke(["test"])
+
+    asyncio.run(_run())
+
+
+def test_usage_recorded_on_state_given_to_constructor():
+    """Nodes call llm.ainvoke(messages) without state=; the get_llm() state is used."""
+    async def _run():
+        from llm.fallback import FallbackClient
+        from llm.usage_tracker import UsageTracker
+
+        mock_groq = MagicMock()
+        mock_groq.ainvoke = AsyncMock(return_value=_mock_response(input_tokens=1000,
+                                                                  output_tokens=1000))
+        mock_groq.model_name = "llama-3.3-70b-versatile"
+        state = {"usage_metadata": None}
+        client = FallbackClient(mock_groq, None, None, UsageTracker(), node_name="n",
+                                state=state)
+        await client.ainvoke(["test"])
+        assert len(state["usage_metadata"]) == 1
+        entry = state["usage_metadata"][0]
+        assert entry["model"] == "llama-3.3-70b-versatile"
+        assert entry["node_name"] == "n"
+        assert abs(entry["estimated_cost_usd"] - 0.00138) < 1e-6
+
+    asyncio.run(_run())
+
+
+def test_model_name_is_a_real_string_not_a_mock():
+    """A client object without a string model name is recorded as 'unknown', cost 0."""
+    async def _run():
+        mock_groq = MagicMock()  # .model_name is an auto-created MagicMock, not a str
+        mock_groq.ainvoke = AsyncMock(return_value=_mock_response())
+        client, tracker = _make_client(mock_groq, None, None)
+        await client.ainvoke(["test"])
+        assert tracker.entries[0]["model"] == "unknown"
+        assert tracker.entries[0]["estimated_cost_usd"] == 0.0
+
+    asyncio.run(_run())
+
+
+def test_cost_dated_model_variant_uses_base_rate():
+    """Provider-reported dated names map to the base model's rate (longest prefix)."""
+    from llm.usage_tracker import calculate_cost
+    assert calculate_cost("gpt-4o-mini-2024-07-18", 1000, 1000) == calculate_cost(
+        "gpt-4o-mini", 1000, 1000)
+    assert calculate_cost("gpt-4o-2024-08-06", 1000, 1000) == calculate_cost(
+        "gpt-4o", 1000, 1000)
+
+
+@pytest.fixture
+def llm_factories(monkeypatch):
+    """Patch the three provider factories with counters; isolate env and client cache."""
+    import llm.fallback as fb
+    import llm.groq_client as groq_client
+    import llm.openai_client as openai_client
+
+    calls = {"groq": 0, "openai": [], "ollama": 0}
+
+    def fake_groq(cfg):
+        calls["groq"] += 1
+        return MagicMock(name="groq_llm")
+
+    def fake_openai(cfg, complexity="simple"):
+        calls["openai"].append(complexity)
+        return MagicMock(name=f"openai_llm_{complexity}")
+
+    def fake_ollama(cfg):
+        calls["ollama"] += 1
+        return MagicMock(name="ollama_llm")
+
+    monkeypatch.setattr(groq_client, "_make_groq_llm", fake_groq)
+    monkeypatch.setattr(openai_client, "_make_openai_llm", fake_openai)
+    monkeypatch.setattr(fb, "_make_ollama_llm", fake_ollama)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    fb.clear_llm_cache()
+    yield calls
+    fb.clear_llm_cache()
+
+
+def test_get_llm_skips_providers_without_api_key(llm_factories):
+    from llm.fallback import get_llm
+    client = get_llm(node="t")
+    assert client.provider_names == ["ollama"]
+    assert llm_factories["groq"] == 0
+    assert llm_factories["openai"] == []
+
+
+def test_get_llm_includes_providers_with_api_key(llm_factories, monkeypatch):
+    from llm.fallback import get_llm
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
+    client = get_llm(node="t")
+    assert client.provider_names == ["groq", "openai", "ollama"]
+
+
+def test_get_llm_caches_clients(llm_factories, monkeypatch):
+    """Repeated calls reuse provider clients; a changed key or model tier builds a new one."""
+    from llm.fallback import get_llm
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
+
+    first = get_llm(node="a")
+    second = get_llm(node="b")
+    assert llm_factories["groq"] == 1
+    assert llm_factories["openai"] == ["simple"]
+    assert llm_factories["ollama"] == 1
+    assert first._providers[0][1] is second._providers[0][1]
+    assert first is not second  # each call gets its own client wrapper and tracker
+
+    get_llm(node="c", state={"query_plan": {"complexity": "complex"}})
+    assert llm_factories["openai"] == ["simple", "complex"]
+
+    monkeypatch.setenv("GROQ_API_KEY", "rotated-key")
+    get_llm(node="d")
+    assert llm_factories["groq"] == 2
+
+
+def test_get_llm_survives_provider_construction_failure(llm_factories, monkeypatch):
+    import llm.groq_client as groq_client
+    from llm.fallback import get_llm
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq")
+    monkeypatch.setattr(groq_client, "_make_groq_llm",
+                        MagicMock(side_effect=RuntimeError("bad client")))
+    client = get_llm(node="t")
+    assert client.provider_names == ["ollama"]
+
+
+def test_get_llm_config_is_independent_of_cwd(llm_factories, monkeypatch, tmp_path):
+    """config/config.yaml is resolved relative to the package, not the working directory."""
+    from llm.config import CONFIG_PATH, get_section
+    from llm.fallback import get_llm
+    monkeypatch.chdir(tmp_path)
+    assert CONFIG_PATH.is_absolute() and CONFIG_PATH.exists()
+    assert get_section("llm").get("groq_model")
+    assert get_llm(node="t").provider_names == ["ollama"]

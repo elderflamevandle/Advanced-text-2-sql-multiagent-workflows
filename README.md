@@ -6,7 +6,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-green?style=flat-square)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-red?style=flat-square&logo=streamlit)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-![Tests](https://img.shields.io/badge/Tests-191%2B%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/Tests-940%2B%20passing-brightgreen?style=flat-square)
 
 **A production-grade multi-agent system that converts natural language questions into accurate SQL queries and executes them — with self-correction, human approval, and live visualizations.**
 
@@ -47,7 +47,7 @@ User Question  →  Gatekeeper  →  Schema Linker  →  Query Planner  →  SQL
 - **Groq + OpenAI fallback** — Llama-3.3-70B as primary, GPT-4o as fallback, with automatic switching on failure
 - **Streamlit frontend** — chat interface, live debugging panel, Edit & Rerun SQL, auto-generated charts
 - **Token + cost tracking** per query across providers
-- **Ragas evaluation** — confidence score (0.0–1.0) returned for every query
+- **Evaluation** — Ragas scoring is planned (Phase 11) and not implemented yet
 
 ---
 
@@ -68,7 +68,7 @@ User Question  →  Gatekeeper  →  Schema Linker  →  Query Planner  →  SQL
 | **Correction Plan** | Diagnoses SQL failures using the error taxonomy |
 | **Correction SQL** | Rewrites the SQL based on the diagnosis (max 2 retries) |
 | **Formatter** | Generates a natural language answer from the results |
-| **Evaluator** | Scores the answer accuracy using Ragas |
+| **Evaluator** | Placeholder for Ragas scoring (not implemented yet) |
 
 ### State (`AgentState`)
 
@@ -204,6 +204,165 @@ print(result["generated_sql"])
 
 ---
 
+## Running as a service
+
+The same pipeline can run as an HTTP API that several tenants share. Each tenant has its own API key, its own database connections and its own conversation threads. The Streamlit app does not need any of this.
+
+### Environment variables
+
+| Variable | Default | What it does |
+|---|---|---|
+| `T2S_SECRET_KEY` | none | Fernet key that encrypts stored database credentials. Required unless the metadata store is in memory. |
+| `T2S_ADMIN_API_KEY` | none | Key for the `/v1/admin/*` routes. They are switched off while it is unset. |
+| `T2S_METADATA_URL` | `sqlite:///.t2s/metadata.db` | SQLAlchemy URL for tenants, API keys and connections. |
+| `T2S_CHECKPOINT_URL` | `memory://` | Where conversation state is kept: `memory://`, `sqlite:///path/to/file.db` or `postgresql://...`. |
+| `T2S_REDIS_URL` | none | If set, rate limits and the cache are shared through Redis. Otherwise they live in the API process. |
+| `T2S_RATE_LIMIT_FAIL_MODE` | `local` | What the rate limiter does when Redis is down: `local` keeps limiting inside each process, `open` lets everything through, `closed` rejects everything. |
+| `T2S_RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute for each tenant on the query endpoints. |
+| `T2S_MAX_CONCURRENT_QUERIES` | `8` | Queries one tenant may have running at the same time. |
+| `T2S_ALLOW_FILE_DATABASES` | `false` | Lets tenants register SQLite or DuckDB file paths. Leave it off unless you are the only tenant. |
+
+Generate the two keys like this:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"   # T2S_SECRET_KEY
+python -c "import secrets; print(secrets.token_urlsafe(32))"                                 # T2S_ADMIN_API_KEY
+```
+
+If you lose `T2S_SECRET_KEY`, the stored database passwords cannot be read any more and the connections have to be registered again.
+
+### Start it with Docker Compose
+
+```bash
+cp .env.example .env
+# fill in T2S_SECRET_KEY, T2S_ADMIN_API_KEY, POSTGRES_PASSWORD and at least one LLM key
+docker compose up --build
+```
+
+This starts three containers: the API on port 8000, PostgreSQL 16 for metadata and checkpoints, and Redis 7 for rate limiting and the cache. PostgreSQL data is kept in the `pgdata` volume. Check that the API is up:
+
+```bash
+curl http://localhost:8000/healthz
+```
+
+The image does not include the vector libraries, because they pull in PyTorch. Without them the planner gets the full schema instead of a retrieved subset, which is fine for small and medium schemas. To include them, build with `--build-arg EXTRAS=service,postgresql,mysql,vector`.
+
+To run without Docker, install the extras and start uvicorn. With the defaults this uses a local SQLite file for metadata and keeps checkpoints in memory.
+
+```bash
+pip install -e ".[service,postgresql,mysql]"
+export T2S_SECRET_KEY=... T2S_ADMIN_API_KEY=...
+uvicorn api.main:app --port 8000
+```
+
+### Create a tenant and an API key
+
+```bash
+curl -s -X POST http://localhost:8000/v1/admin/tenants \
+  -H "X-Admin-Key: $T2S_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "acme"}'
+```
+
+The response contains the tenant and its first key under `api_key.key`. The key is shown once, so store it now. The examples below assume it is in `$API_KEY`.
+
+### Register a database
+
+```bash
+curl -s -X POST http://localhost:8000/v1/connections \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "sales",
+        "db_type": "postgresql",
+        "params": {"host": "db.example.com", "port": 5432, "database": "sales",
+                   "user": "readonly_user", "password": "..."}
+      }'
+```
+
+The API connects once to test the parameters and returns the connection with its `id`. The password is stored encrypted and is never returned. Use a database user that can only read.
+
+Hosts on private or loopback addresses are refused by default, so a tenant cannot point the service at your internal network. If the database you want to query is in the same Compose network or on your own machine, set `T2S_ALLOW_PRIVATE_HOSTS=true`.
+
+### Ask a question
+
+```bash
+curl -s -X POST http://localhost:8000/v1/query \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connection_id": "<id from the previous step>", "question": "Top 5 customers by revenue"}'
+```
+
+The response has `status`, `answer`, `sql`, `rows` and a `thread_id`. Send the same `thread_id` with the next question to continue the conversation.
+
+`POST /v1/query/stream` takes the same body and returns server-sent events, so a client can show progress while the query runs:
+
+```bash
+curl -N -X POST http://localhost:8000/v1/query/stream \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connection_id": "<id>", "question": "Monthly revenue in 2024"}'
+```
+
+### Approve SQL before it runs
+
+Add `"require_approval": true` to a query and the run stops before execution. The response then has `status: "awaiting_approval"` and the SQL under `pending_approval`. Decide with:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/threads/<thread_id>/approval \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"decision": "approve"}'
+```
+
+`decision` is `approve`, `reject` or `edit`. With `edit`, send the corrected statement in `sql`. Pending approvals survive a restart only if `T2S_CHECKPOINT_URL` points at SQLite or PostgreSQL.
+
+### Schema catalog and feedback
+
+For each registered database the service keeps a catalog: the tables and columns, short descriptions of them, row counts and column statistics, a few sample values, and how the tables join. When a question comes in, the catalog picks the tables that matter and only those go into the prompt, so a database with hundreds of tables still works. Until a catalog exists, queries use the plain schema as before.
+
+A build starts on its own when you register a connection (`catalog.auto_build` in `config/config.yaml`). To start one yourself, or to rebuild after the database changed:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/connections/<id>/catalog \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+```
+
+The call returns `202` right away and the build runs in the background. Check on it, and see what it found, with:
+
+```bash
+curl -s http://localhost:8000/v1/connections/<id>/catalog -H "X-API-Key: $API_KEY"
+curl -s http://localhost:8000/v1/connections/<id>/catalog/tables -H "X-API-Key: $API_KEY"
+```
+
+If a description is wrong or missing, set it yourself. Leave out `column` to describe the table. Your text is kept when the catalog is rebuilt.
+
+```bash
+curl -s -X PUT http://localhost:8000/v1/connections/<id>/catalog/descriptions \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"table": "invoices", "column": "status", "description": "paid, open or void"}'
+```
+
+Sample values of columns that look sensitive (names, emails, phone numbers, addresses, identifiers and the like) are never stored, never sent to the LLM, and never returned by these endpoints.
+
+Every answered query comes back with a `query_id`. Use it to say whether the answer was right, and to supply the correct SQL if you have it:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/queries/<query_id>/feedback \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"rating": "down", "comment": "should count distinct customers", "corrected_sql": "SELECT COUNT(DISTINCT customer_id) FROM invoices"}'
+```
+
+`rating` is `up` or `down`. `comment` and `corrected_sql` are optional, and the corrected SQL has to be a single read-only query. Good question and SQL pairs are shown to the model as examples for later, similar questions on the same database, and queries that needed a correction leave a short note about what went wrong. Result rows are never stored.
+
+When a question can be read in clearly different ways, the response has `status: "needs_clarification"` and a `clarification_question` instead of an answer. Reply with a normal query on the same `thread_id`. Set `app.clarification_enabled: false` to turn this off.
+
+---
+
 ## Configuration
 
 All settings live in `config/config.yaml`:
@@ -247,23 +406,38 @@ text-2-sql-agentic-pipeline/
 │       ├── correction_sql.py
 │       ├── formatter.py
 │       └── evaluator.py
+├── api/                     # FastAPI service (multi-tenant HTTP API)
+│   ├── main.py              # create_app() and the `app` uvicorn serves
+│   ├── auth.py              # Tenants and API keys
+│   ├── settings.py          # T2S_* settings
+│   └── routes/              # admin, connections, query, health
 ├── graph/
 │   ├── state.py             # AgentState TypedDict
 │   ├── builder.py           # StateGraph compilation
+│   ├── checkpointing.py     # Checkpointer from T2S_CHECKPOINT_URL (memory, SQLite, PostgreSQL)
+│   ├── resilience.py        # Node wrapper for LLM outages and usage tracking
 │   └── conditions.py        # Conditional routing functions
+├── infra/
+│   ├── ratelimit.py         # Rate limiter (in-process or Redis)
+│   └── cache.py             # TTL cache (in-process or Redis)
 ├── database/
 │   ├── manager.py           # Unified DB facade + schema extraction
+│   ├── registry.py          # Per-tenant connection registry
+│   ├── credentials.py       # Encryption of stored database credentials
+│   ├── metadata.py          # Engine for the metadata store
 │   ├── safety.py            # Destructive statement scanner
 │   ├── schema_utils.py      # Schema introspection helpers
 │   └── connectors/          # DuckDB, SQLite, PostgreSQL, MySQL
 ├── llm/
 │   ├── fallback.py          # FallbackClient (Groq → OpenAI)
+│   ├── context.py           # Per-request provider keys
 │   ├── groq_client.py
 │   ├── openai_client.py
 │   └── usage_tracker.py     # Token + cost tracking
 ├── vector/
 │   ├── embeddings.py        # Schema embedding generation
 │   ├── retriever.py         # Pinecone + ChromaDB retrieval
+│   ├── namespace.py         # Vector namespace per connection and schema version
 │   └── schema_graph.py      # FK relationship graph for JOIN hints
 ├── streamlit_app/
 │   ├── app.py               # Main Streamlit entry point
@@ -279,16 +453,22 @@ text-2-sql-agentic-pipeline/
 │   └── pinecone_config.yaml # Vector index configuration
 ├── data/
 │   └── chinook.db           # Bundled sample database (music store)
-├── tests/                   # 191+ tests across all modules
+├── tests/                   # 940+ tests across all modules
 │   ├── agents/
+│   ├── api/
 │   ├── database/
 │   ├── graph/
+│   ├── infra/
 │   ├── llm/
 │   ├── safety/
 │   ├── vector/
 │   └── ui/
 ├── utils/
 │   └── error_parser.py      # PostgreSQL/MySQL error parsers
+├── docs/
+│   └── phase2-contracts.md  # Interfaces between the service modules
+├── Dockerfile
+├── docker-compose.yml       # API + PostgreSQL + Redis
 ├── .env.example
 └── pyproject.toml
 ```

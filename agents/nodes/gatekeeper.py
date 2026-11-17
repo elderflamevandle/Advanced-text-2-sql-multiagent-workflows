@@ -1,6 +1,12 @@
-"""Gatekeeper agent node: classifies queries, rewrites follow-ups, enforces NL safety."""
+"""Gatekeeper agent node: classifies queries and rewrites follow-ups.
+
+Read-only safety is enforced on the generated SQL (database.safety.scan_sql), not on the
+wording of the question, so questions such as "which customers dropped off last month"
+are answered normally.
+"""
 import json
 import logging
+
 from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -9,8 +15,13 @@ _GATEKEEPER_PROMPT = """You are a query classification assistant for a Text-to-S
 
 Given a user query and optional chat history, classify the query into exactly one of these categories:
 - sql: The user wants to query a database (retrieve, aggregate, filter, join data)
-- conversational: The user is chatting, asking about the system, or making non-data requests
-- follow_up: The user is following up on a previous query and the question only makes sense in context
+- conversational: The user is chatting, asking about the system, or making non-data requests.
+  This system is read-only: if the user asks to change the database itself (insert, update,
+  delete or drop data or tables), use this category and explain that only read-only queries
+  are supported. Questions that merely mention such words ("deleted accounts",
+  "customers who dropped off", "removed items") are ordinary sql questions.
+- follow_up: The user is following up on a previous query and the question only makes sense in context.
+  This includes a reply to a clarifying question the assistant asked in its last message.
 - ambiguous: The query is too vague to determine intent without clarification
 
 Also extract:
@@ -24,10 +35,83 @@ Respond with ONLY valid JSON in this exact format:
   "response": "<response text or empty string>"
 }}
 
-Chat history: {chat_history}
+Chat history:
+{chat_history}
+
 User query: {user_query}"""
 
-_DESTRUCTIVE_PATTERNS = ["delete", "drop", "truncate", "remove all", "destroy", "erase"]
+# Fields that belong to one query. The gatekeeper is the entry node, so resetting them here
+# keeps values from an earlier query on the same thread out of this one, whichever client
+# built the initial state.
+_PER_QUERY_RESET = {
+    "schema_context": None,
+    "join_hints": None,
+    "examples": None,
+    "lessons": None,
+    "query_id": None,
+    "clarification_question": None,
+    "reselect_count": 0,
+    "required_tables": None,
+}
+
+_HISTORY_LIMIT = 6
+_HISTORY_MAX_CHARS = 500
+_ROLE_NAMES = {"human": "user", "ai": "assistant"}
+
+
+def _message_role_content(message) -> tuple[str, str]:
+    """Extract (role, content) from a LangChain message, dict, (role, content) pair or str."""
+    if isinstance(message, dict):
+        role = message.get("role") or message.get("type") or "unknown"
+        content = message.get("content", "")
+    elif isinstance(message, (tuple, list)) and len(message) == 2:
+        role, content = message
+    elif hasattr(message, "content"):
+        role = getattr(message, "type", None) or getattr(message, "role", None) or "unknown"
+        content = message.content
+    else:
+        role, content = "unknown", message
+
+    if isinstance(content, list):  # multi-part content blocks
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                parts.append(str(part.get("text", "")))
+            else:
+                parts.append(str(part))
+        content = " ".join(p for p in parts if p)
+
+    role = str(role).lower()
+    return _ROLE_NAMES.get(role, role), " ".join(str(content or "").split())
+
+
+def _format_chat_history(messages, user_query: str = "", limit: int = _HISTORY_LIMIT) -> str:
+    """Render the last `limit` messages as readable "role: content" lines."""
+    turns = [_message_role_content(m) for m in (messages or [])]
+    turns = [(role, content) for role, content in turns if content]
+    # The current question is passed separately; do not repeat it as history.
+    if turns and turns[-1] == ("user", " ".join(user_query.split())):
+        turns.pop()
+    if not turns:
+        return "(none)"
+    lines = []
+    for role, content in turns[-limit:]:
+        if len(content) > _HISTORY_MAX_CHARS:
+            content = content[:_HISTORY_MAX_CHARS] + "..."
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
+def _awaiting_clarification(messages) -> bool:
+    """True when the last message is the assistant's clarifying question (the evaluator
+    node marks it with additional_kwargs["clarification"])."""
+    if not messages:
+        return False
+    last = messages[-1]
+    extra = getattr(last, "additional_kwargs", None)
+    if extra is None and isinstance(last, dict):
+        extra = last.get("additional_kwargs")
+    return bool(isinstance(extra, dict) and extra.get("clarification"))
 
 
 def _parse_json_response(content: str) -> dict:
@@ -44,35 +128,32 @@ def _parse_json_response(content: str) -> dict:
 
 
 async def gatekeeper_node(state: AgentState) -> dict:
-    """Classifies user query, rewrites follow-ups, blocks destructive NL, checks db connection."""
+    """Classifies user query, rewrites follow-ups, checks db connection."""
     user_query = state.get("user_query", "")
 
     # 1. DB connection check — schema presence confirms a database is connected.
     # db_manager is not stored in state (not msgpack-serializable); use schema instead.
-    if state.get("schema") is None:
-        logger.info("gatekeeper_node: no schema in state, returning early")
+    # Registered connections (API) carry a connection_id and no schema: the schema linker
+    # loads what it needs. The legacy Streamlit path has no connection_id and a schema.
+    if not state.get("connection_id") and state.get("schema") is None:
+        logger.info("gatekeeper_node: no connection or schema in state, returning early")
         return {
+            **_PER_QUERY_RESET,
             "final_answer": "Please connect to a database first using the sidebar.",
             "query_type": "conversational",
         }
 
-    # 2. NL safety check — block destructive intent before LLM call
-    query_lower = user_query.lower()
-    if any(pattern in query_lower for pattern in _DESTRUCTIVE_PATTERNS):
-        logger.info("gatekeeper_node: blocked destructive query: %s", user_query)
-        return {
-            "final_answer": "I can only run read-only queries. I cannot delete or modify data.",
-            "query_type": "conversational",
-        }
+    # 2. No keyword filtering of the question: words like "dropped" or "deleted" are
+    # common in legitimate questions. Read-only enforcement happens on the generated SQL.
 
     # 3. Lazy import get_llm (FallbackClient factory)
     from llm.fallback import get_llm
-    from langchain_core.messages import SystemMessage, HumanMessage
+    from langchain_core.messages import HumanMessage, SystemMessage
 
     llm = get_llm(node="gatekeeper", state=state)
 
     # 4. Build messages for classification
-    chat_history = state.get("messages", [])
+    chat_history = _format_chat_history(state.get("messages"), user_query)
     system_prompt = _GATEKEEPER_PROMPT.format(
         chat_history=chat_history,
         user_query=user_query,
@@ -87,13 +168,27 @@ async def gatekeeper_node(state: AgentState) -> dict:
     intent = parsed.get("intent", "")
     response_text = parsed.get("response", "")
 
-    result: dict = {"query_type": category, "intent": intent}
+    # The previous turn ended with a clarifying question: treat this message as its answer
+    # so the rewrite below folds it into the original question.
+    if category in ("sql", "ambiguous") and _awaiting_clarification(state.get("messages")):
+        category = "follow_up"
+
+    result: dict = {**_PER_QUERY_RESET, "query_type": category, "intent": intent}
 
     # 6. Follow-up rewrite
     if category == "follow_up":
         rewrite_messages = [
-            SystemMessage(content="Rewrite the following follow-up query as a complete standalone question, incorporating any necessary context from the chat history. Return only the rewritten query text, nothing else."),
-            HumanMessage(content=f"Chat history: {chat_history}\nFollow-up query: {user_query}"),
+            SystemMessage(content=(
+                "Rewrite the following follow-up query as a complete standalone question, "
+                "incorporating any necessary context from the chat history. "
+                "If the assistant's last message asked a clarifying question, combine the "
+                "user's original question with their answer into one complete question. "
+                "If the new message is an unrelated standalone question, return it unchanged. "
+                "Return only the rewritten query text, nothing else."
+            )),
+            HumanMessage(
+                content=f"Chat history:\n{chat_history}\n\nFollow-up query: {user_query}"
+            ),
         ]
         rewrite_response = await llm.ainvoke(rewrite_messages)
         result["resolved_query"] = rewrite_response.content.strip()
