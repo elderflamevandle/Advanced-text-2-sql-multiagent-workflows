@@ -3,6 +3,7 @@ import logging
 import re
 from typing import Optional
 
+from agents.prompt_context import extra_context, schema_prompt
 from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,9 @@ Rules:
 1. Fix ONLY the issues identified in the correction plan.
 2. Preserve all other clauses, logic, and structure exactly.
 3. Never introduce INSERT, UPDATE, DELETE, DROP, or other write operations.
-4. Output format (use exactly these labels):
+4. Use only the tables and columns listed in the schema context, and use listed column
+   values verbatim.
+5. Output format (use exactly these labels):
    SQL:
    <corrected sql>
    EXPLANATION:
@@ -39,17 +42,6 @@ Rules:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _format_schema_context(schema: dict) -> str:
-    """Convert schema dict to a human-readable string for the prompt."""
-    if not schema:
-        return "(no schema provided)"
-    lines = []
-    for table, info in schema.items():
-        cols = info.get("columns", [])
-        col_strs = [f"{c.get('name', '?')} {c.get('type', '')}" for c in cols]
-        lines.append(f"Table {table}: {', '.join(col_strs)}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +86,7 @@ async def correction_sql_node(state: AgentState) -> dict:
     from llm.fallback import get_llm
 
     db_type = state.get("db_type", "sqlite") or "sqlite"
-    schema = state.get("schema") or {}
-    schema_context = _format_schema_context(schema)
+    schema_context = schema_prompt(state)
     correction_plan_json = json.dumps(correction_plan, indent=2)
 
     system_content = _CORRECTION_SQL_PROMPT.format(
@@ -103,7 +94,7 @@ async def correction_sql_node(state: AgentState) -> dict:
         correction_plan_json=correction_plan_json,
         db_type=db_type,
         schema_context=schema_context,
-    )
+    ) + extra_context(state, examples=False)
 
     user_query = state.get("user_query", "") or ""
     llm = get_llm(node="correction_sql", state=state)

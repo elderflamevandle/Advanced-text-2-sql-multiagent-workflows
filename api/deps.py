@@ -47,6 +47,40 @@ def get_graph(request: Request):
     return _require(request, "graph")
 
 
+def optional_catalog(request: Request):
+    """The schema catalog service, or None when it is not available."""
+    service = getattr(request.app.state, "catalog", None)
+    if service is None:
+        from agents.services import catalog_service
+        service = catalog_service()
+    return service
+
+
+def optional_memory(request: Request):
+    """The query memory service, or None when it is not available."""
+    service = getattr(request.app.state, "memory", None)
+    if service is None:
+        from agents.services import memory_service
+        service = memory_service()
+    return service
+
+
+def get_catalog(request: Request):
+    service = optional_catalog(request)
+    if service is None:
+        raise APIError(503, "catalog_unavailable",
+                       "The schema catalog is not available on this server.")
+    return service
+
+
+def get_memory(request: Request):
+    service = optional_memory(request)
+    if service is None:
+        raise APIError(503, "memory_unavailable",
+                       "Query feedback is not available on this server.")
+    return service
+
+
 async def current_tenant(
     request: Request,
     api_key: str | None = Security(_api_key_header),

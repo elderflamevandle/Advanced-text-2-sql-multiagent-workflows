@@ -3,6 +3,7 @@ import json
 import logging
 import re
 
+from agents.prompt_context import schema_prompt
 from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -47,18 +48,6 @@ Respond with ONLY a single valid JSON object with exactly these keys:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _format_schema_context(schema: dict) -> str:
-    """Convert schema dict to a human-readable string for the prompt."""
-    if not schema:
-        return "(no schema provided)"
-    lines = []
-    for table, info in schema.items():
-        cols = info.get("columns", [])
-        col_strs = [f"{c.get('name', '?')} {c.get('type', '')}" for c in cols]
-        lines.append(f"Table {table}: {', '.join(col_strs)}")
-    return "\n".join(lines)
-
-
 def _build_candidate_pool(state: AgentState) -> list:
     """Build a list of candidate names from relevant_tables + their column names."""
     relevant_tables = state.get("relevant_tables") or []
@@ -81,6 +70,116 @@ def _extract_unrecognized_name(error_message: str) -> str:
     if ": " in error_message:
         return error_message.rsplit(": ", 1)[-1].strip()
     return ""
+
+
+# Error categories that mean "the query needs a table or column the selection lacks".
+RESELECT_CATEGORIES = frozenset({"missing_table", "missing_column"})
+RESELECT_ACTION = "reselect"
+_MAX_REQUIRED_TABLES = 5
+
+
+def _should_reselect(state: AgentState, category_id: str) -> bool:
+    """Go back to table selection: only for a missing table/column, only once per query,
+    and only when the tables came from the schema catalog."""
+    return (
+        category_id in RESELECT_CATEGORIES
+        and not state.get("reselect_count")
+        and bool(state.get("schema_context"))
+        and bool(state.get("connection_id"))
+    )
+
+
+def _all_tables(state: AgentState) -> dict:
+    """{table: [column names]} for the whole database (registry), {} when unavailable."""
+    try:
+        from database.registry import get_registry
+
+        schema = get_registry().get_schema(state.get("tenant_id"), state.get("connection_id"))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("correction_plan_node: full schema unavailable (%s)", type(exc).__name__)
+        return {}
+    tables = {}
+    for name, info in (schema or {}).items():
+        cols = (info or {}).get("columns") or [] if isinstance(info, dict) else []
+        tables[str(name)] = [str(c.get("name")) for c in cols
+                             if isinstance(c, dict) and c.get("name")]
+    return tables
+
+
+def _required_tables(category_id: str, unrecognized: str, tables: dict) -> list:
+    """Real table names the next selection must include, derived from the error."""
+    from utils.error_parser import get_fuzzy_matches
+
+    name = (unrecognized or "").strip().strip('`"[]')
+    if not name or not tables:
+        return []
+    by_lower = {t.lower(): t for t in tables}
+    found: list = []
+    parts = [p.strip('`"[] ') for p in name.split(".") if p.strip('`"[] ')]
+    if category_id == "missing_table":
+        # "schema.table" -> the last part names the table.
+        target = parts[-1] if parts else name
+        if target.lower() in by_lower:
+            found.append(by_lower[target.lower()])
+        found.extend(get_fuzzy_matches(target, list(tables)))
+    else:
+        # "alias.column" or "table.column": a real table qualifier, then owners of the column.
+        if len(parts) > 1 and parts[-2].lower() in by_lower:
+            found.append(by_lower[parts[-2].lower()])
+        column = (parts[-1] if parts else name).lower()
+        found.extend(t for t, cols in tables.items()
+                     if any(c.lower() == column for c in cols))
+    return [t for t in dict.fromkeys(found) if t in tables][:_MAX_REQUIRED_TABLES]
+
+
+async def _reselect_update(state: AgentState, category: dict, confidence: str) -> dict:
+    """State update that sends the run back to the schema linker (see graph/conditions.py).
+
+    No LLM call: the diagnosis is the taxonomy match. The failed attempt is recorded in
+    sql_history and counted against the retry limit, exactly as correction_sql_node does.
+    """
+    import asyncio
+
+    error_log = state.get("error_log") or {}
+    message = error_log.get("message", "") if isinstance(error_log, dict) else str(error_log)
+    category_id = category.get("id", "unknown")
+    unrecognized = _extract_unrecognized_name(message)
+    tables = await asyncio.to_thread(_all_tables, state)
+    required = _required_tables(category_id, unrecognized, tables)
+
+    retry_count = state.get("retry_count") or 0
+    history = list(state.get("sql_history") or [])
+    history.append({
+        "sql": state.get("generated_sql", "") or "",
+        "error": error_log,
+        "attempt_num": retry_count,
+    })
+    kind = "table" if category_id == "missing_table" else "column"
+    plan = {
+        "error_category": category_id,
+        "root_cause": (f"The query used a {kind} ({unrecognized or 'unknown'}) that is not "
+                       "in the tables selected for the question."),
+        "correction_steps": ["Select the tables again, including the ones the error points "
+                             "to, and write the query from the new selection."],
+        "affected_clauses": [],
+        "suggested_changes": {"required_tables": required},
+        "confidence": confidence,
+        "fuzzy_suggestions": required,
+        "severity": category.get("severity", "recoverable"),
+        "strategy": "reselect_tables",
+        "prompt_hint": category.get("prompt_hint", ""),
+        "action": RESELECT_ACTION,
+    }
+    logger.info("correction_plan_node: %s -> selecting tables again (required=%s)",
+                category_id, required)
+    return {
+        "correction_plan": plan,
+        "reselect_count": 1,
+        "required_tables": required,
+        "sql_history": history,
+        "retry_count": retry_count + 1,
+        "error_log": None,  # cleared like correction_sql_node does, so routing starts fresh
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +217,10 @@ async def correction_plan_node(state: AgentState) -> dict:
             }
         }
 
+    # --- Missing table/column with a catalog: select the tables again (once, no LLM) ---
+    if isinstance(error_log, dict) and _should_reselect(state, category.get("id", "")):
+        return await _reselect_update(state, category, confidence)
+
     # --- Build fuzzy suggestions for name-related errors ---
     name_related = category.get("id", "") in ("missing_table", "missing_column", "ambiguous_column")
     fuzzy_suggestions: list = []
@@ -129,8 +232,7 @@ async def correction_plan_node(state: AgentState) -> dict:
             fuzzy_suggestions = get_fuzzy_matches(unrecognized, candidates)
 
     # --- Format schema context ---
-    schema = state.get("schema") or {}
-    schema_context = _format_schema_context(schema)
+    schema_context = schema_prompt(state)
 
     # --- Build prompt ---
     error_message = error_log.get("message", "") if isinstance(error_log, dict) else str(error_log)

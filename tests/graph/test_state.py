@@ -17,6 +17,14 @@ EXPECTED_FIELDS = {
     "query_type",
     "schema",
     "relevant_tables",
+    "schema_context",
+    "join_hints",
+    "examples",
+    "lessons",
+    "query_id",
+    "clarification_question",
+    "reselect_count",
+    "required_tables",
     "query_plan",
     "generated_sql",
     "sql_explanation",
@@ -42,7 +50,7 @@ def test_agentstate_has_required_fields():
         f"Field mismatch. Missing: {EXPECTED_FIELDS - set(hints.keys())}, "
         f"Extra: {set(hints.keys()) - EXPECTED_FIELDS}"
     )
-    assert len(hints) == 21
+    assert len(hints) == 29
     assert "db_manager" not in hints
 
 

@@ -20,7 +20,8 @@ Given a user query and optional chat history, classify the query into exactly on
   delete or drop data or tables), use this category and explain that only read-only queries
   are supported. Questions that merely mention such words ("deleted accounts",
   "customers who dropped off", "removed items") are ordinary sql questions.
-- follow_up: The user is following up on a previous query and the question only makes sense in context
+- follow_up: The user is following up on a previous query and the question only makes sense in context.
+  This includes a reply to a clarifying question the assistant asked in its last message.
 - ambiguous: The query is too vague to determine intent without clarification
 
 Also extract:
@@ -38,6 +39,20 @@ Chat history:
 {chat_history}
 
 User query: {user_query}"""
+
+# Fields that belong to one query. The gatekeeper is the entry node, so resetting them here
+# keeps values from an earlier query on the same thread out of this one, whichever client
+# built the initial state.
+_PER_QUERY_RESET = {
+    "schema_context": None,
+    "join_hints": None,
+    "examples": None,
+    "lessons": None,
+    "query_id": None,
+    "clarification_question": None,
+    "reselect_count": 0,
+    "required_tables": None,
+}
 
 _HISTORY_LIMIT = 6
 _HISTORY_MAX_CHARS = 500
@@ -87,6 +102,18 @@ def _format_chat_history(messages, user_query: str = "", limit: int = _HISTORY_L
     return "\n".join(lines)
 
 
+def _awaiting_clarification(messages) -> bool:
+    """True when the last message is the assistant's clarifying question (the evaluator
+    node marks it with additional_kwargs["clarification"])."""
+    if not messages:
+        return False
+    last = messages[-1]
+    extra = getattr(last, "additional_kwargs", None)
+    if extra is None and isinstance(last, dict):
+        extra = last.get("additional_kwargs")
+    return bool(isinstance(extra, dict) and extra.get("clarification"))
+
+
 def _parse_json_response(content: str) -> dict:
     """Strip markdown fences and parse JSON. Falls back to sql category on error."""
     text = content.strip()
@@ -106,9 +133,12 @@ async def gatekeeper_node(state: AgentState) -> dict:
 
     # 1. DB connection check — schema presence confirms a database is connected.
     # db_manager is not stored in state (not msgpack-serializable); use schema instead.
-    if state.get("schema") is None:
-        logger.info("gatekeeper_node: no schema in state, returning early")
+    # Registered connections (API) carry a connection_id and no schema: the schema linker
+    # loads what it needs. The legacy Streamlit path has no connection_id and a schema.
+    if not state.get("connection_id") and state.get("schema") is None:
+        logger.info("gatekeeper_node: no connection or schema in state, returning early")
         return {
+            **_PER_QUERY_RESET,
             "final_answer": "Please connect to a database first using the sidebar.",
             "query_type": "conversational",
         }
@@ -138,7 +168,12 @@ async def gatekeeper_node(state: AgentState) -> dict:
     intent = parsed.get("intent", "")
     response_text = parsed.get("response", "")
 
-    result: dict = {"query_type": category, "intent": intent}
+    # The previous turn ended with a clarifying question: treat this message as its answer
+    # so the rewrite below folds it into the original question.
+    if category in ("sql", "ambiguous") and _awaiting_clarification(state.get("messages")):
+        category = "follow_up"
+
+    result: dict = {**_PER_QUERY_RESET, "query_type": category, "intent": intent}
 
     # 6. Follow-up rewrite
     if category == "follow_up":
@@ -146,6 +181,9 @@ async def gatekeeper_node(state: AgentState) -> dict:
             SystemMessage(content=(
                 "Rewrite the following follow-up query as a complete standalone question, "
                 "incorporating any necessary context from the chat history. "
+                "If the assistant's last message asked a clarifying question, combine the "
+                "user's original question with their answer into one complete question. "
+                "If the new message is an unrelated standalone question, return it unchanged. "
                 "Return only the rewritten query text, nothing else."
             )),
             HumanMessage(

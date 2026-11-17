@@ -5,9 +5,11 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from graph.state import AgentState
 from graph.conditions import (
+    route_after_correction_plan,
     route_after_executor,
     route_after_gatekeeper,
     route_after_hitl,
+    route_after_planner,
     route_unless_llm_failed,
 )
 from graph.resilience import resilient_node
@@ -64,7 +66,7 @@ def build_graph(checkpointer=None):
     # After each LLM-calling node: go straight to the formatter if no provider answered.
     wf.add_conditional_edges(
         "query_planner",
-        route_unless_llm_failed,
+        route_after_planner,  # formatter also when the planner asks for clarification
         {"continue": "sql_generator", "formatter": "formatter"},
     )
     wf.add_conditional_edges(
@@ -84,8 +86,9 @@ def build_graph(checkpointer=None):
     )
     wf.add_conditional_edges(
         "correction_plan_node",
-        route_unless_llm_failed,
-        {"continue": "correction_sql_node", "formatter": "formatter"},
+        route_after_correction_plan,  # schema_linker: select tables again (at most once)
+        {"continue": "correction_sql_node", "schema_linker": "schema_linker",
+         "formatter": "formatter"},
     )
     wf.add_conditional_edges(  # correction loop back-edge
         "correction_sql_node",

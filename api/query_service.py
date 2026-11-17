@@ -64,15 +64,20 @@ def graph_config(tenant_id: str, thread_id: str) -> dict:
 
 # -- admission (rate limit, in-flight cap) ------------------------------------
 
-async def admit(rate_limiter, admission: QueryAdmission, settings: Settings,
-                tenant_id: str, thread_id: str) -> Permit:
-    """Apply the per-tenant limits. Returns a permit the caller must release."""
+async def check_rate_limit(rate_limiter, settings: Settings, tenant_id: str) -> None:
+    """Per-tenant request rate (shared by queries, approvals and feedback)."""
     allowed, retry_after = await rate_limiter.allow(
         f"tenant:{tenant_id}", settings.rate_limit_per_minute, 60)
     if not allowed:
         seconds = max(1, math.ceil(float(retry_after or 0)))
         raise APIError(429, "rate_limited", "Rate limit exceeded. Retry later.",
                        headers={"Retry-After": str(seconds)})
+
+
+async def admit(rate_limiter, admission: QueryAdmission, settings: Settings,
+                tenant_id: str, thread_id: str) -> Permit:
+    """Apply the per-tenant limits. Returns a permit the caller must release."""
+    await check_rate_limit(rate_limiter, settings, tenant_id)
     permit, reason = admission.try_acquire(tenant_id, internal_thread_id(tenant_id, thread_id))
     if permit is None:
         if reason == "thread_busy":
@@ -119,9 +124,13 @@ def llm_credentials(groq_api_key: str | None, openai_api_key: str | None):
 # -- state --------------------------------------------------------------------
 
 def build_initial_state(question: str, *, tenant_id: str, connection_id: str,
-                        db_type: str, schema: dict | None) -> dict:
+                        db_type: str, schema: dict | None = None) -> dict:
     """Initial AgentState for a new query. Identifiers and plain data only: no credentials,
-    no manager objects (state is checkpointed)."""
+    no manager objects (state is checkpointed).
+
+    ``schema`` stays None for registered connections: the schema linker loads the tables it
+    selects (catalog or registry), so the whole schema is not copied into every checkpoint.
+    """
     return {
         "messages": [],
         "user_query": question,
@@ -136,6 +145,14 @@ def build_initial_state(question: str, *, tenant_id: str, connection_id: str,
         "resolved_query": None,
         "query_type": None,
         "relevant_tables": None,
+        "schema_context": None,
+        "join_hints": None,
+        "examples": None,
+        "lessons": None,
+        "query_id": None,
+        "clarification_question": None,
+        "reselect_count": 0,
+        "required_tables": None,
         "query_plan": None,
         "generated_sql": None,
         "sql_explanation": None,
@@ -198,6 +215,10 @@ def build_result(snapshot, thread_id: str, max_rows: int) -> dict:
             "calls": len(usage_entries),
         },
         "pending_approval": None,
+        "query_id": values.get("query_id"),
+        "clarification_question": None,
+        "tables_used": (list(values.get("relevant_tables") or [])
+                        if values.get("generated_sql") else []),
     }
     if HITL_NODE in pending_nodes:
         result["status"] = "awaiting_approval"
@@ -212,6 +233,15 @@ def build_result(snapshot, thread_id: str, max_rows: int) -> dict:
     if values.get("error_log"):
         result["status"] = "failed"
         result["error"] = _error_info(values["error_log"])
+        return result
+
+    if values.get("query_type") == "clarification" and values.get("clarification_question"):
+        # The planner asked instead of guessing: no SQL was generated or run. The client
+        # answers with a new query on the same thread_id.
+        result["status"] = "needs_clarification"
+        result["clarification_question"] = values["clarification_question"]
+        result["answer"] = values.get("final_answer") or values["clarification_question"]
+        result["sql"] = result["sql_explanation"] = None
         return result
 
     rows = values.get("db_results")

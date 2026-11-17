@@ -27,6 +27,16 @@ class AgentState(TypedDict):
     query_type: Optional[str]
     schema: Optional[dict]
     relevant_tables: Optional[list]
+    # Schema catalog and query memory (docs/phase3-contracts.md). All optional: runs without
+    # a catalog leave them empty and use the legacy schema dict.
+    schema_context: Optional[str]     # rendered schema text for prompts (selected tables)
+    join_hints: Optional[list]        # [{"from","to","on","kind"}]
+    examples: Optional[list]          # [{"question","sql","verified"}] similar past queries
+    lessons: Optional[list]           # short notes learned from corrections and feedback
+    query_id: Optional[str]           # id of this run in the query log (feedback endpoint)
+    clarification_question: Optional[str]  # set when the planner asks instead of guessing
+    reselect_count: Optional[int]     # times table selection was redone after an error (0/1)
+    required_tables: Optional[list]   # tables the reselection must include
     query_plan: Optional[str]
     generated_sql: Optional[str]
     sql_explanation: Optional[str]

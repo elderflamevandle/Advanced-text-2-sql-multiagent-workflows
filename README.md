@@ -317,6 +317,50 @@ curl -s -X POST http://localhost:8000/v1/threads/<thread_id>/approval \
 
 `decision` is `approve`, `reject` or `edit`. With `edit`, send the corrected statement in `sql`. Pending approvals survive a restart only if `T2S_CHECKPOINT_URL` points at SQLite or PostgreSQL.
 
+### Schema catalog and feedback
+
+For each registered database the service keeps a catalog: the tables and columns, short descriptions of them, row counts and column statistics, a few sample values, and how the tables join. When a question comes in, the catalog picks the tables that matter and only those go into the prompt, so a database with hundreds of tables still works. Until a catalog exists, queries use the plain schema as before.
+
+A build starts on its own when you register a connection (`catalog.auto_build` in `config/config.yaml`). To start one yourself, or to rebuild after the database changed:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/connections/<id>/catalog \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+```
+
+The call returns `202` right away and the build runs in the background. Check on it, and see what it found, with:
+
+```bash
+curl -s http://localhost:8000/v1/connections/<id>/catalog -H "X-API-Key: $API_KEY"
+curl -s http://localhost:8000/v1/connections/<id>/catalog/tables -H "X-API-Key: $API_KEY"
+```
+
+If a description is wrong or missing, set it yourself. Leave out `column` to describe the table. Your text is kept when the catalog is rebuilt.
+
+```bash
+curl -s -X PUT http://localhost:8000/v1/connections/<id>/catalog/descriptions \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"table": "invoices", "column": "status", "description": "paid, open or void"}'
+```
+
+Sample values of columns that look sensitive (names, emails, phone numbers, addresses, identifiers and the like) are never stored, never sent to the LLM, and never returned by these endpoints.
+
+Every answered query comes back with a `query_id`. Use it to say whether the answer was right, and to supply the correct SQL if you have it:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/queries/<query_id>/feedback \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"rating": "down", "comment": "should count distinct customers", "corrected_sql": "SELECT COUNT(DISTINCT customer_id) FROM invoices"}'
+```
+
+`rating` is `up` or `down`. `comment` and `corrected_sql` are optional, and the corrected SQL has to be a single read-only query. Good question and SQL pairs are shown to the model as examples for later, similar questions on the same database, and queries that needed a correction leave a short note about what went wrong. Result rows are never stored.
+
+When a question can be read in clearly different ways, the response has `status: "needs_clarification"` and a `clarification_question` instead of an answer. Reply with a normal query on the same `thread_id`. Set `app.clarification_enabled: false` to turn this off.
+
 ---
 
 ## Configuration

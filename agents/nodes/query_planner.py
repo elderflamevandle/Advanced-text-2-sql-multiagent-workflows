@@ -4,6 +4,7 @@ import logging
 import re
 from typing import Any
 
+from agents.prompt_context import SCHEMA_RULES, extra_context, schema_prompt
 from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,23 @@ The JSON must have exactly these keys:
   "complexity" : one of "simple", "moderate", "complex"
 """
 
+# Appended to the planner prompt when app.clarification_enabled is true.
+_CLARIFICATION_BLOCK = """
+Also include these two keys:
+  "needs_clarification"    : true or false
+  "clarification_question" : string (empty when needs_clarification is false)
+Set "needs_clarification" to true ONLY when the question cannot be answered from the listed \
+schema without guessing between materially different readings that would give different \
+results (for example two unrelated columns could both be the "amount" asked for). \
+Never ask when a sensible default resolves it: an unstated time range means all time, an \
+unstated sort order or row limit is your choice, "top" means highest first. Never ask about \
+SQL details, and never ask again when the question already contains the user's answer to an \
+earlier clarification. When true, "clarification_question" is one short question that names \
+the options, and the other keys still hold your best-guess plan.
+"""
+
+_CLARIFICATION_MAX_CHARS = 500
+
 # ---------------------------------------------------------------------------
 # Safe-default plan (returned when JSON parsing fails)
 # ---------------------------------------------------------------------------
@@ -61,16 +79,23 @@ def _parse_json_response(raw: str) -> dict:
     return json.loads(cleaned)
 
 
-def _format_schema_context(schema: dict) -> str:
-    """Convert schema dict to a human-readable string for the prompt."""
-    if not schema:
-        return "(no schema provided)"
-    lines = []
-    for table, info in schema.items():
-        cols = info.get("columns", [])
-        col_strs = [f"{c.get('name', '?')} {c.get('type', '')}" for c in cols]
-        lines.append(f"Table {table}: {', '.join(col_strs)}")
-    return "\n".join(lines)
+
+def _clarification_enabled() -> bool:
+    """app.clarification_enabled from config/config.yaml (default: on)."""
+    try:
+        from llm.config import get_section
+
+        return bool(get_section("app").get("clarification_enabled", True))
+    except Exception:  # noqa: BLE001 - unreadable config: keep the default
+        return True
+
+
+def _clarification_question(plan: dict) -> str | None:
+    """The question to ask the user, when the plan says one is needed."""
+    if not isinstance(plan, dict) or plan.get("needs_clarification") is not True:
+        return None
+    question = " ".join(str(plan.get("clarification_question") or "").split())
+    return question[:_CLARIFICATION_MAX_CHARS] or None
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +108,17 @@ async def query_planner_node(state: AgentState) -> dict:
     from llm.fallback import get_llm
 
     query = state.get("resolved_query") or state.get("user_query", "")
-    schema = state.get("schema") or {}
     relevant_tables = state.get("relevant_tables") or []
 
-    schema_context = _format_schema_context(schema)
     system_content = _PLANNER_PROMPT.format(
-        schema_context=schema_context,
+        schema_context=schema_prompt(state),
         relevant_tables=relevant_tables,
     )
+    # Never ask on the second pass after a failed query: the user already got past here.
+    may_clarify = _clarification_enabled() and not state.get("reselect_count")
+    if may_clarify:
+        system_content += _CLARIFICATION_BLOCK
+    system_content += f"\n{SCHEMA_RULES}" + extra_context(state, previous_attempt=True)
 
     llm = get_llm(node="query_planner", state=state)
     messages = [
@@ -105,5 +133,15 @@ async def query_planner_node(state: AgentState) -> dict:
     except (ValueError, json.JSONDecodeError) as exc:
         logger.warning("query_planner_node: JSON parse failed (%s) — using default plan", exc)
         plan = dict(_DEFAULT_PLAN)  # fresh copy
+
+    question = _clarification_question(plan) if may_clarify else None
+    if question:
+        logger.info("query_planner_node: asking the user for clarification")
+        return {
+            "query_plan": plan,
+            "clarification_question": question,
+            "final_answer": question,
+            "query_type": "clarification",
+        }
 
     return {"query_plan": plan}

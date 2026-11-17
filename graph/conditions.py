@@ -56,6 +56,27 @@ def route_unless_llm_failed(state: AgentState) -> str:
     return "formatter" if llm_failed(state) else "continue"
 
 
+def route_after_planner(state: AgentState) -> str:
+    """'formatter' on an LLM outage or when the planner asks the user a clarifying
+    question (no SQL is generated), otherwise 'continue'."""
+    if llm_failed(state):
+        return "formatter"
+    if state.get("query_type") == "clarification" and state.get("clarification_question"):
+        return "formatter"
+    return "continue"
+
+
+def route_after_correction_plan(state: AgentState) -> str:
+    """'formatter' on an LLM outage; 'schema_linker' when the diagnosis asks for a new
+    table selection (missing table/column, at most once per query); else 'continue'."""
+    if llm_failed(state):
+        return "formatter"
+    plan = state.get("correction_plan")
+    if isinstance(plan, dict) and plan.get("action") == "reselect":
+        return "schema_linker"
+    return "continue"
+
+
 def route_after_hitl(state: AgentState) -> str:
     """Route to executor on approval, formatter on rejection."""
     status = state.get("approval_status")

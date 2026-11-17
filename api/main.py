@@ -12,7 +12,7 @@ from api.context import install_log_record_factory
 from api.errors import install_error_handlers
 from api.limits import QueryAdmission
 from api.observability import RequestContextMiddleware
-from api.routes import admin, connections, ops, query
+from api.routes import admin, catalog as catalog_routes, connections, ops, query
 from api.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -54,12 +54,18 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app(settings: Settings | None = None, *, registry=None, rate_limiter=None,
-               graph=None, auth_store: AuthStore | None = None) -> FastAPI:
+               graph=None, auth_store: AuthStore | None = None,
+               catalog=None, memory=None) -> FastAPI:
     """Create the API.
 
     ``registry`` (database.registry.ConnectionRegistry), ``rate_limiter``
     (infra.ratelimit.RateLimiter) and ``graph`` (compiled LangGraph) are created in the
     lifespan when omitted; tests pass fakes. They are always read from ``app.state``.
+
+    ``catalog`` (catalog.service.CatalogService) and ``memory``
+    (memory.service.MemoryService) are optional: when omitted, the process-wide services are
+    looked up on use through ``agents.services`` and the related endpoints answer 503 if
+    they are not available.
     """
     settings = settings or Settings()
     install_log_record_factory()
@@ -80,6 +86,15 @@ def create_app(settings: Settings | None = None, *, registry=None, rate_limiter=
         set_registry(registry)
     app.state.rate_limiter = rate_limiter
     app.state.graph = graph
+    app.state.catalog = catalog
+    app.state.memory = memory
+    # The graph nodes reach both services through agents.services: same instances.
+    if catalog is not None:
+        from agents.services import use_catalog_service
+        use_catalog_service(catalog)
+    if memory is not None:
+        from agents.services import use_memory_service
+        use_memory_service(memory)
     app.state.admission = QueryAdmission(settings.max_concurrent_queries)
 
     install_error_handlers(app)
@@ -87,13 +102,14 @@ def create_app(settings: Settings | None = None, *, registry=None, rate_limiter=
     app.include_router(admin.router)
     app.include_router(connections.router)
     app.include_router(query.router)
+    app.include_router(catalog_routes.router)
 
     if settings.cors_origin_list:  # off unless T2S_CORS_ORIGINS is set
         from fastapi.middleware.cors import CORSMiddleware
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origin_list,
-            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["X-API-Key", "X-Admin-Key", "X-Request-ID", "Content-Type",
                            "X-Groq-Api-Key", "X-OpenAI-Api-Key"],
             expose_headers=["X-Request-ID", "Retry-After"],

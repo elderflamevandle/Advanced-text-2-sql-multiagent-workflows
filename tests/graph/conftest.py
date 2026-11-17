@@ -23,3 +23,15 @@ def make_initial_state(user_query: str = "test query") -> dict:
         "retry_count": 0,
         "final_answer": None,
     }
+
+
+@pytest.fixture(autouse=True)
+def _no_real_catalog_or_memory():
+    """Tests run without the schema catalog and the query memory unless they inject fakes
+    (agents.services.set_*_for_tests, or create_app(catalog=..., memory=...))."""
+    from agents import services
+
+    services.set_catalog_service_for_tests(None)
+    services.set_memory_service_for_tests(None)
+    yield
+    services.reset_services_for_tests()

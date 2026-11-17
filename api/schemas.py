@@ -113,7 +113,7 @@ class PendingApproval(BaseModel):
 
 class QueryResponse(BaseModel):
     thread_id: str
-    status: Literal["completed", "awaiting_approval", "failed"]
+    status: Literal["completed", "awaiting_approval", "failed", "needs_clarification"]
     answer: str | None = None
     sql: str | None = None
     sql_explanation: str | None = None
@@ -123,3 +123,33 @@ class QueryResponse(BaseModel):
     error: ErrorInfo | None = None
     usage: Usage = Usage()
     pending_approval: PendingApproval | None = None
+    # Id of this run in the query log; pass it to POST /v1/queries/{query_id}/feedback.
+    query_id: str | None = None
+    # Set with status "needs_clarification": answer it with a new query on the same thread.
+    clarification_question: str | None = None
+    tables_used: list[str] = []
+
+
+# -- catalog and feedback ----------------------------------------------------
+
+class CatalogBuildRequest(_Request):
+    force: bool = False
+
+
+class CatalogStatusOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    connection_id: str
+    state: str
+
+
+class DescriptionUpdate(_Request):
+    table: str = Field(min_length=1, max_length=256)
+    column: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str = Field(min_length=1, max_length=2000)
+
+
+class FeedbackRequest(_Request):
+    rating: Literal["up", "down"]
+    comment: str | None = Field(default=None, max_length=2000)
+    corrected_sql: str | None = Field(default=None, max_length=20000)

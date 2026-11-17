@@ -29,7 +29,8 @@ def test_query_json_happy_path(client, stub_graph, limiter):
     assert response.status_code == 200
     body = response.json()
     assert set(body) == {"thread_id", "status", "answer", "sql", "sql_explanation", "rows",
-                         "row_count", "truncated", "error", "usage", "pending_approval"}
+                         "row_count", "truncated", "error", "usage", "pending_approval",
+                         "query_id", "clarification_question", "tables_used"}
     assert body["status"] == "completed" and body["error"] is None
     assert body["rows"] == [{"id": 1, "owner": "a"}] and body["row_count"] == 1
     assert body["sql"] == StubGraph.SQL and body["answer"] == "1 row(s)."
@@ -41,7 +42,8 @@ def test_query_json_happy_path(client, stub_graph, limiter):
     assert internal_thread == f"{tenant_id}:{body['thread_id']}"
     assert state["user_query"] == "list items" and state["db_type"] == "sqlite"
     assert state["tenant_id"] == tenant_id and state["connection_id"] == connection_id
-    assert state["schema"]["items"]["primary_keys"] == ["id"]
+    # The schema is not copied into the state: the schema linker loads what it needs.
+    assert state["schema"] is None
     # Per-query resets, as the Streamlit UI does.
     assert state["usage_metadata"] is None and state["retry_count"] == 0
     for field in ("generated_sql", "error_log", "approval_status", "final_answer",

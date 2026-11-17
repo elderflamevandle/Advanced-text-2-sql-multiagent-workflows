@@ -31,17 +31,14 @@ def _check_question(body: QueryRequest, settings: Settings) -> None:
 
 
 async def _load_connection(registry, tenant_id: str, connection_id: str):
-    """Connection info and schema for this tenant (ConnectionNotFound -> 404 via handler)."""
-    def work():
-        info = registry.get_info(tenant_id, connection_id)
-        return info, registry.get_schema(tenant_id, connection_id)
-
-    return await asyncio.to_thread(work)
+    """Connection info for this tenant (ConnectionNotFound -> 404 via handler). The schema
+    is not loaded here: the schema linker node fetches what the question needs."""
+    return await asyncio.to_thread(registry.get_info, tenant_id, connection_id)
 
 
-def _initial_state(body: QueryRequest, tenant: Tenant, info, schema) -> dict:
+def _initial_state(body: QueryRequest, tenant: Tenant, info) -> dict:
     return qs.build_initial_state(body.question, tenant_id=tenant.id, connection_id=info.id,
-                                  db_type=info.db_type, schema=schema)
+                                  db_type=info.db_type, schema=None)
 
 
 @router.post("/query", response_model=QueryResponse,
@@ -64,9 +61,9 @@ async def query(
                             tenant.id, thread_id)
     try:
         async def work():
-            info, schema = await _load_connection(registry, tenant.id, body.connection_id)
+            info = await _load_connection(registry, tenant.id, body.connection_id)
             return await qs.run_query(
-                graph, initial_state=_initial_state(body, tenant, info, schema),
+                graph, initial_state=_initial_state(body, tenant, info),
                 tenant_id=tenant.id, thread_id=thread_id,
                 require_approval=body.require_approval, settings=settings,
                 groq_api_key=groq_key, openai_api_key=openai_key)
@@ -104,8 +101,8 @@ async def query_stream(
                             tenant.id, thread_id)
     try:
         # Resolved before the stream starts, so auth/limit/404 errors are plain HTTP errors.
-        info, schema = await _load_connection(registry, tenant.id, body.connection_id)
-        initial_state = _initial_state(body, tenant, info, schema)
+        info = await _load_connection(registry, tenant.id, body.connection_id)
+        initial_state = _initial_state(body, tenant, info)
     except BaseException:
         permit.release()
         raise

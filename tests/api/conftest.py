@@ -186,7 +186,8 @@ class StubGraph:
         entry["next"] = ("executor",)
 
 
-def make_app(*, registry=None, rate_limiter=None, graph=None, **settings):
+def make_app(*, registry=None, rate_limiter=None, graph=None, catalog=None, memory=None,
+             **settings):
     from api.main import create_app
     from api.settings import Settings
 
@@ -195,6 +196,7 @@ def make_app(*, registry=None, rate_limiter=None, graph=None, **settings):
         registry=registry if registry is not None else FakeRegistry(),
         rate_limiter=rate_limiter if rate_limiter is not None else FakeRateLimiter(),
         graph=graph if graph is not None else StubGraph(),
+        catalog=catalog, memory=memory,
     )
 
 
@@ -248,3 +250,15 @@ def app(registry, limiter, stub_graph):
 @pytest.fixture
 def client(app):
     return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_catalog_or_memory():
+    """Tests run without the schema catalog and the query memory unless they inject fakes
+    (agents.services.set_*_for_tests, or create_app(catalog=..., memory=...))."""
+    from agents import services
+
+    services.set_catalog_service_for_tests(None)
+    services.set_memory_service_for_tests(None)
+    yield
+    services.reset_services_for_tests()

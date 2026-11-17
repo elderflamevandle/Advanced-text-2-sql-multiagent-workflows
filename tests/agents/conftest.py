@@ -1,3 +1,4 @@
+import pytest
 def make_agent_state(user_query: str = "test query", db_manager: object = None) -> dict:
     """Return a complete AgentState dict with all 20 fields. Use a fresh copy per test."""
     if db_manager is None:
@@ -23,3 +24,15 @@ def make_agent_state(user_query: str = "test query", db_manager: object = None) 
         "retry_count": 0,
         "final_answer": None,
     }
+
+
+@pytest.fixture(autouse=True)
+def _no_real_catalog_or_memory():
+    """Tests run without the schema catalog and the query memory unless they inject fakes
+    (agents.services.set_*_for_tests, or create_app(catalog=..., memory=...))."""
+    from agents import services
+
+    services.set_catalog_service_for_tests(None)
+    services.set_memory_service_for_tests(None)
+    yield
+    services.reset_services_for_tests()
